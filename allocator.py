@@ -351,15 +351,8 @@ class Allocator(object):
     def allocate(self):
         self.allocate_params()
         self.allocate_locals()
-        print "Interim Stack:"
-        print self.stack
-        print "Stack size:", self.sp
         if self.decl is not None:
-            try:
-                self.allocate_registers()
-            finally:
-                print "RTL output:"
-                pprint.pprint(self.code)
+            self.allocate_registers()
 
 ## Entry point
 
