@@ -3,3 +3,11 @@ byte sum(byte a, byte b)
 	a += b;
 	return a;
 }
+
+byte sump(byte *a, byte *b)
+{
+	byte tmp = *a;
+
+	tmp += *b;
+	return tmp;
+}

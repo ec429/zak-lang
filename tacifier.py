@@ -3,16 +3,31 @@
 import sys, pprint
 import parser
 
+## Convert parse tree to Two-Address Code intermediate form
+
 class TACError(Exception): pass
 
 class TACifier(object):
 	class TACStatement(object): pass
 	class TACDeclare(TACStatement):
-		def __init__(self, name, size):
+		def __init__(self, name, sc, typ):
 			self.name = name
-			self.size = size
+			self.sc = sc
+			self.typ = typ
 		def __repr__(self):
-			return 'TACDeclare(%r, %r)'%(self.name, self.size)
+			return 'TACDeclare(%r, %r, %r)'%(self.name, self.sc, self.typ)
+	class TACRename(TACStatement):
+		def __init__(self, dst, src):
+			self.dst = dst
+			self.src = src
+		def __repr__(self):
+			return 'TACRename(%r, %r)'%(self.dst, self.src)
+	class TACDeref(TACStatement):
+		def __init__(self, dst, src):
+			self.dst = dst
+			self.src = src
+		def __repr__(self):
+			return 'TACDeref(%r, %r)'%(self.dst, self.src)
 	class TACAssign(TACStatement):
 		def __init__(self, dst, src):
 			self.dst = dst
@@ -30,8 +45,6 @@ class TACifier(object):
 			self.src = src
 		def __repr__(self):
 			return 'TACReturn(%r)'%(self.src,)
-	class FuncParam(object):
-		pass
 	class Value(object):
 		def __init__(self, typ):
 			self.typ = typ
@@ -43,35 +56,56 @@ class TACifier(object):
 			self.name = name
 		def __repr__(self):
 			return 'Identifier(%r, %r)'%(self.typ, self.name)
+	class Gensym(object):
+		def __init__(self, n):
+			self.n = n
+		def __repr__(self):
+			return '$(%d)'%(self.n,)
+	def gensym(self):
+		n = self.gennum
+		self.gennum += 1
+		return self.Gensym(n)
 	def __init__(self):
 		self.scopes = [{}]
 		self.functions = {None:[]}
 		self.in_func = None
+		self.gennum = 0
 	def arg_list(self, arglist):
 		scope = {}
 		for name,typ in arglist.args:
 			if name in scope:
 				raise TACError("Name", name, "redeclared within parameter list")
-			scope[name] = (parser.Lexer.Auto("auto"), typ, self.FuncParam())
+			scope[name] = (parser.Lexer.Auto("auto"), typ)
 		return scope
 	def get_lvalue(self, lval):
 		if isinstance(lval, parser.Parser.IdentifierExpression):
 			for scope in reversed(self.scopes):
 				if lval.name in scope:
-					sc, typ, init = scope[lval.name]
+					sc, typ = scope[lval.name]
 					return (self.Identifier(typ, lval.name), [])
-		else:
-			pprint.pprint(lval)
-			raise NotImplementedError()
+			raise TACError("Name", lval.name, "not in scope")
+		pprint.pprint(lval)
+		raise NotImplementedError()
 	def get_rvalue(self, rval):
 		if isinstance(rval, parser.Parser.IdentifierExpression):
 			for scope in reversed(self.scopes):
 				if rval.name in scope:
-					sc, typ, init = scope[rval.name]
+					sc, typ = scope[rval.name]
 					return (self.Identifier(typ, rval.name), [])
-		else:
-			pprint.pprint(rval)
-			raise NotImplementedError()
+			raise TACError("Name", rval.name, "not in scope")
+		if isinstance(rval, parser.Parser.Dereference):
+			pointee, ps = self.get_rvalue(rval.erand)
+			if not isinstance(pointee.typ, parser.Parser.Pointer):
+				raise TACError("Dereferencing non-pointer", rval.erand)
+			sym = self.gensym()
+			typ = pointee.typ.pointee
+			self.scopes[-1][sym] = (parser.Lexer.Auto('auto'), typ)
+			stmts = ps
+			stmts.append(self.TACDeclare(sym, parser.Lexer.Auto('auto'), typ))
+			stmts.append(self.TACDeref(sym, pointee))
+			return (self.Identifier(typ, sym), stmts)
+		pprint.pprint(rval)
+		raise NotImplementedError()
 	def emit_assignish(self, op, lvalue, rvalue):
 		if isinstance(lvalue, self.Identifier):
 			if isinstance(rvalue, self.Identifier):
@@ -102,7 +136,7 @@ class TACifier(object):
 			rval = expr.right
 			lvalue, ls = self.get_lvalue(lval)
 			rvalue, rs = self.get_rvalue(rval)
-			return (lvalue, ls + rs + self.emit_assignish(op, lvalue, rvalue)) # lvalue becomes an rvalue
+			return (lvalue, rs + self.emit_assignish(op, lvalue, rvalue) + ls) # lvalue becomes an rvalue
 		pprint.pprint(expr)
 		raise NotImplementedError()
 	def walk_stmt(self, stmt):
@@ -115,11 +149,26 @@ class TACifier(object):
 		else:
 			pprint.pprint(stmt)
 			raise NotImplementedError()
+	def declare(self, declaration):
+		stmts = []
+		name, sc, decl, init = declaration
+		if name in self.scopes[-1]:
+			raise TACError("Identifier", name, "redefined in same scope")
+		self.scopes[-1][name] = (sc, decl)
+		rvalue, rs = self.get_rvalue(init)
+		stmts.extend(rs)
+		if not isinstance(rvalue, self.Identifier):
+			raise TACError("Uninterpreted rvalue", rvalue)
+		if isinstance(rvalue.name, self.Gensym):
+			stmts.append(self.TACRename(name, rvalue))
+		else:
+			stmts.insert(0, self.TACDeclare(name, sc, decl))
+			stmts.append(self.TACAssign(name, rvalue))
+		return stmts
 	def walk(self, block):
 		func = []
 		for declaration in block.local:
-			pprint.pprint(declaration)
-			raise NotImplementedError()
+			func.extend(self.declare(declaration))
 		for stmt in block.body:
 			func.extend(self.walk_stmt(stmt))
 		return func
@@ -135,7 +184,7 @@ class TACifier(object):
 			self.scopes.pop(-1)
 			self.in_func = None
 			self.functions[name] = func
-			self.scopes[-1][name] = (sc, decl, func)
+			self.scopes[-1][name] = (sc, decl)
 		else:
 			raise NotImplementedError()
 
