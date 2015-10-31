@@ -213,12 +213,18 @@ class Parser(object):
 			self.name = name
 		def __repr__(self):
 			return '%s()'%(self.__class__.__name__)
+		def __eq__(self, other):
+			return False
+		def __ne__(self, other):
+			return not (self == other)
 	class ValueOfType(Declarator): # the thing that has the type that started the declaration
 		def __init__(self, typ):
 			self.typ = typ
 		def __repr__(self):
 			return 'ValueOfType(%s)'%(self.typ,)
-	class Identifier(Declarator):
+		def __eq__(self, other):
+			return isinstance(other, Parser.ValueOfType) and self.typ == other.typ
+	class Identifier(Declarator): # does not escape into type definitions
 		def __repr__(self):
 			return 'Identifier(%s)'%(self.name,)
 	class Pointer(Declarator):
@@ -226,7 +232,9 @@ class Parser(object):
 			self.pointee = pointee
 		def __repr__(self):
 			return 'Pointer(%r)'%(self.pointee,)
-	class ParenDecl(Declarator):
+		def __eq__(self, other):
+			return isinstance(other, Parser.Pointer) and self.pointee == other.pointee
+	class ParenDecl(Declarator): # does not escape into type definitions
 		def __init__(self, contents):
 			self.contents = contents
 		def __repr__(self):
@@ -237,11 +245,18 @@ class Parser(object):
 			self.arglist = arglist
 		def __repr__(self):
 			return 'FunctionDecl(%r, %r)'%(self.bound, self.arglist)
+		def __eq__(self, other):
+			return isinstance(other, Parser.FunctionDecl) and self.arglist == other.arglist
 	class ArgList(object):
 		def __init__(self, args):
 			self.args = args
 		def __repr__(self):
 			return 'ArgList(%r)'%(self.args,)
+		def __eq__(self, other):
+			if not isinstance(other, Parser.Arglist) and len(self.args) == len(other.args): return False
+			for s, o in zip(self.args, other.args):
+				if s[1] != o[1]: return False # only compare types, not names
+			return True
 	class Expression(object): pass
 	class Literal(Expression):
 		def __init__(self, value):
@@ -562,6 +577,15 @@ class Parser(object):
 				tokens.pop(0)
 				continue
 			self.expected("',' or ')'", tokens)
+
+## Entry point
+
+def parse(source):
+	tokens = Lexer().lex(source)
+	pruned_tokens = Lexer.prune(tokens)
+	parser = Parser()
+	parser.parse(pruned_tokens)
+	return parser
 
 ## Test code
 
