@@ -1,0 +1,24 @@
+zak (Z80 Abstractions for Kernels)
+==================================
+
+What?
+-----
+A vaguely C-like language designed for low-level system programming on the
+ Zilog Z80 processor.
+A toolchain for use with this language (currently just a parser, but will
+ eventually include a compiler).
+
+Why?
+----
+Writing the kernel for pegboard (my SMP Z80 architecture, see
+ <https://github.com/ec429/pegboard>) in assembly was proving just too much
+ pain, and GCC doesn't have a (proper) Z80 backend.  Even if it did, it
+ wouldn't really be suitable for my needs, because I want to be able to do
+ crazy regparm things on a per-function basis (i.e. the function prototype can
+ specify register linkage of some parameters) to make life easier for callees
+ written in asm.
+
+Who?
+----
+Developed by Edward Cree (ec429).
+Licensed under the GNU GPL version 2.
