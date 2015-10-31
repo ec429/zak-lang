@@ -2,6 +2,8 @@
 
 import sys, pprint
 import parser
+LEX = parser.Lexer
+PAR = parser.Parser
 
 ## Convert parse tree to Two-Address Code intermediate form
 
@@ -31,7 +33,8 @@ class TACifier(object):
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
-            self.src.rename(dst, src)
+            if self.src == dst:
+                self.src = src
         def __repr__(self):
             return 'TACDeref(%r, %r)'%(self.dst, self.src)
     class TACAssign(TACStatement):
@@ -41,7 +44,8 @@ class TACifier(object):
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
-            self.src.rename(dst, src)
+            if self.src == dst:
+                self.src = src
         def __repr__(self):
             return 'TACAssign(%r, %r)'%(self.dst, self.src)
     class TACAdd(TACStatement):
@@ -51,7 +55,8 @@ class TACifier(object):
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
-            self.src.rename(dst, src)
+            if self.src == dst:
+                self.src = src
         def __repr__(self):
             return 'TACAdd(%r, %r)'%(self.dst, self.src)
     class TACReturn(TACStatement):
@@ -95,10 +100,10 @@ class TACifier(object):
         for name,typ in arglist.args:
             if name in scope:
                 raise TACError("Name", name, "redeclared within parameter list")
-            scope[name] = (parser.Lexer.Auto("auto"), typ)
+            scope[name] = (LEX.Auto("auto"), typ)
         return scope
     def get_lvalue(self, lval):
-        if isinstance(lval, parser.Parser.IdentifierExpression):
+        if isinstance(lval, PAR.IdentifierExpression):
             for scope in reversed(self.scopes):
                 if lval.name in scope:
                     sc, typ = scope[lval.name]
@@ -107,22 +112,22 @@ class TACifier(object):
         pprint.pprint(lval)
         raise NotImplementedError()
     def get_rvalue(self, rval):
-        if isinstance(rval, parser.Parser.IdentifierExpression):
+        if isinstance(rval, PAR.IdentifierExpression):
             for scope in reversed(self.scopes):
                 if rval.name in scope:
                     sc, typ = scope[rval.name]
                     return (self.Identifier(typ, rval.name), [])
             raise TACError("Name", rval.name, "not in scope")
-        if isinstance(rval, parser.Parser.Dereference):
+        if isinstance(rval, PAR.Dereference):
             pointee, ps = self.get_rvalue(rval.erand)
-            if not isinstance(pointee.typ, parser.Parser.Pointer):
+            if not isinstance(pointee.typ, PAR.Pointer):
                 raise TACError("Dereferencing non-pointer", rval.erand)
             sym = self.gensym()
             typ = pointee.typ.pointee
-            self.scopes[-1][sym] = (parser.Lexer.Auto('auto'), typ)
+            self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
             stmts = ps
-            stmts.append(self.TACDeclare(sym, parser.Lexer.Auto('auto'), typ))
-            stmts.append(self.TACDeref(sym, pointee))
+            stmts.append(self.TACDeclare(sym, LEX.Auto('auto'), typ))
+            stmts.append(self.TACDeref(sym, pointee.name))
             return (self.Identifier(typ, sym), stmts)
         pprint.pprint(rval)
         raise NotImplementedError()
@@ -131,8 +136,8 @@ class TACifier(object):
             if isinstance(rvalue, self.Identifier):
                 if lvalue.typ != rvalue.typ:
                     raise TACError("Type mismatch assigning", rvalue, "to", lvalue)
-                if isinstance(op, parser.Lexer.Add):
-                    return [self.TACAdd(lvalue.name, rvalue)]
+                if isinstance(op, LEX.Add):
+                    return [self.TACAdd(lvalue.name, rvalue.name)]
                 raise NotImplementedError(op)
             raise TACError("Uninterpreted rvalue", rvalue)
         raise TACError("Uninterpreted lvalue", lvalue)
@@ -148,9 +153,9 @@ class TACifier(object):
         raise TACError("Uninterpreted rvalue", rvalue)
         raise NotImplementedError()
     def walk_expr(self, expr):
-        if isinstance(expr, parser.Parser.IdentifierExpression):
+        if isinstance(expr, PAR.IdentifierExpression):
             return self.get_rvalue(expr)
-        if isinstance(expr, parser.Parser.AssignIsh):
+        if isinstance(expr, PAR.AssignIsh):
             op = expr.op
             lval = expr.left
             rval = expr.right
@@ -160,10 +165,10 @@ class TACifier(object):
         pprint.pprint(expr)
         raise NotImplementedError()
     def walk_stmt(self, stmt):
-        if isinstance(stmt, parser.Parser.ExpressionStatement):
+        if isinstance(stmt, PAR.ExpressionStatement):
             _, stmts = self.walk_expr(stmt.expr)
             return stmts
-        elif isinstance(stmt, parser.Parser.ReturnStatement):
+        elif isinstance(stmt, PAR.ReturnStatement):
             rvalue, stmts = self.walk_expr(stmt.expr)
             return stmts + self.emit_return(rvalue)
         else:
@@ -210,8 +215,8 @@ class TACifier(object):
                 t.rename(rename.src.name, rename.dst)
         return declares + the_rest
     def add(self, name, sc, decl, init):
-        if isinstance(decl, parser.Parser.FunctionDecl) and isinstance(init, parser.Parser.BlockStatement):
-            if isinstance(sc, parser.Lexer.Extern):
+        if isinstance(decl, PAR.FunctionDecl) and isinstance(init, PAR.BlockStatement):
+            if isinstance(sc, LEX.Extern):
                 raise TACError("extern function with definition")
             if self.in_func is not None: # should be impossible, parser won't allow it
                 raise TACError("Nested function definition")
