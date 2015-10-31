@@ -14,6 +14,8 @@ class TACifier(object):
 			self.name = name
 			self.sc = sc
 			self.typ = typ
+		def rename(self, dst, src):
+			raise NotImplementedError()
 		def __repr__(self):
 			return 'TACDeclare(%r, %r, %r)'%(self.name, self.sc, self.typ)
 	class TACRename(TACStatement):
@@ -26,23 +28,38 @@ class TACifier(object):
 		def __init__(self, dst, src):
 			self.dst = dst
 			self.src = src
+		def rename(self, dst, src):
+			if self.dst == dst:
+				self.dst = src
+			self.src.rename(dst, src)
 		def __repr__(self):
 			return 'TACDeref(%r, %r)'%(self.dst, self.src)
 	class TACAssign(TACStatement):
 		def __init__(self, dst, src):
 			self.dst = dst
 			self.src = src
+		def rename(self, dst, src):
+			if self.dst == dst:
+				self.dst = src
+			self.src.rename(dst, src)
 		def __repr__(self):
 			return 'TACAssign(%r, %r)'%(self.dst, self.src)
 	class TACAdd(TACStatement):
 		def __init__(self, dst, src):
 			self.dst = dst
 			self.src = src
+		def rename(self, dst, src):
+			if self.dst == dst:
+				self.dst = src
+			self.src.rename(dst, src)
 		def __repr__(self):
 			return 'TACAdd(%r, %r)'%(self.dst, self.src)
 	class TACReturn(TACStatement):
 		def __init__(self, src):
 			self.src = src
+		def rename(self, dst, src):
+			if self.src == dst:
+				self.src = src
 		def __repr__(self):
 			return 'TACReturn(%r)'%(self.src,)
 	class Value(object):
@@ -54,6 +71,9 @@ class TACifier(object):
 		def __init__(self, typ, name):
 			super(TACifier.Identifier, self).__init__(typ)
 			self.name = name
+		def rename(self, dst, src):
+			if self.name == dst:
+				self.name = src
 		def __repr__(self):
 			return 'Identifier(%r, %r)'%(self.typ, self.name)
 	class Gensym(object):
@@ -112,7 +132,7 @@ class TACifier(object):
 				if lvalue.typ != rvalue.typ:
 					raise TACError("Type mismatch assigning", rvalue, "to", lvalue)
 				if isinstance(op, parser.Lexer.Add):
-					return [self.TACAdd(lvalue.name, rvalue.name)]
+					return [self.TACAdd(lvalue.name, rvalue)]
 				raise NotImplementedError(op)
 			raise TACError("Uninterpreted rvalue", rvalue)
 		raise TACError("Uninterpreted lvalue", lvalue)
@@ -172,6 +192,23 @@ class TACifier(object):
 		for stmt in block.body:
 			func.extend(self.walk_stmt(stmt))
 		return func
+	def normalise(self, func):
+		# Hoick all Declares to the beginning, and apply any Renames
+		declares = [t for t in func if isinstance(t, self.TACDeclare)]
+		renames = [t for t in func if isinstance(t, self.TACRename)]
+		the_rest = [t for t in func if not isinstance(t, (self.TACDeclare, self.TACRename))]
+		for rename in renames:
+			for declare in declares:
+				if declare.name == rename.src.name:
+					if declare.typ != rename.src.typ:
+						raise TACError("Type mismatch normalising", rename, "on", declare)
+					declare.name = rename.dst
+					break
+			else:
+				raise TACError("Found no TACDeclare matching", rename)
+			for t in the_rest:
+				t.rename(rename.src.name, rename.dst)
+		return declares + the_rest
 	def add(self, name, sc, decl, init):
 		if isinstance(decl, parser.Parser.FunctionDecl) and isinstance(init, parser.Parser.BlockStatement):
 			if isinstance(sc, parser.Lexer.Extern):
@@ -183,10 +220,17 @@ class TACifier(object):
 			func = self.walk(init)
 			self.scopes.pop(-1)
 			self.in_func = None
-			self.functions[name] = func
+			self.functions[name] = self.normalise(func)
 			self.scopes[-1][name] = (sc, decl)
 		else:
 			raise NotImplementedError()
+
+## Entry point
+def tacify(parse_tree):
+	tac = TACifier()
+	for (name, sc, decl, init) in parse_tree.globals:
+		tac.add(name, sc, decl, init)
+	return tac
 
 ## Test code
 
@@ -208,3 +252,4 @@ if __name__ == "__main__":
 	print "TAC functions:"
 	pprint.pprint(tac.functions)
 	assert tac.in_func is None, tac.in_func
+	assert len(tac.scopes) == 1
