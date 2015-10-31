@@ -17,6 +17,7 @@ initially, make no attempt to do optimisation in the compiler beyond 'sane code 
 calling conventions:
 * anything but SP and IY (and R, I suppose) is callee-clobbered
 * return value location:
+	may be specified as part of function signature ("word __DE get_dest(void);"), else following defaults:
 	- bool: CF
 	- byte, enum: A
 	- word, pointer: HL
