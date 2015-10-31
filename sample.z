@@ -1,0 +1,68 @@
+word; // like, yeah, man!
+
+byte foo, *bar;
+extern word baz;
+static byte answer_to_everything = 42;
+
+byte (*f)(byte); // declares f as pointer to function (byte) returning byte
+byte *g(byte); // declares g as function (byte) returning pointer to byte
+
+byte (*h(byte))(word); // declares h as function (byte) returning pointer to function (word) returning byte
+
+byte (**(*i)(byte))(word); // declares i as pointer to function (byte) returning pointer to pointer to function (word) returning byte
+
+static bool question(byte answer)
+{
+	return answer == answer_to_everything;
+}
+
+byte sum(byte a, byte b)
+{
+	a += b;
+	return a;
+}
+
+void strcpy(byte *dst, byte *src)
+{
+	byte tmp;
+
+	// A really smart compiler might optimise this to use LDI
+	// But we don't expect to get that smart.  If you want that kind of performance, use asm
+next:
+	tmp = *src;
+	*dst = tmp;
+	src++;
+	++dst;
+	if (tmp)
+		goto next;
+}
+
+/*struct i_exist_somewhere;
+
+struct u32
+{
+	word hi;
+	word lo;
+};
+
+void add_u32(struct u32 *dst, struct u32 *src)
+{
+	dst->lo += src->lo;
+	if (#C) // test carry flag
+		dst->hi++;
+	dst->hi += src->hi;
+}*/
+
+extern void puts(byte *);
+
+byte main(void)
+{
+	byte *hello = "Hello sailor";
+	byte *offset;
+
+	offset = hello;
+	offset += 6;
+	strcpy(offset, "world!");
+	puts(hello);
+	return 0;
+}

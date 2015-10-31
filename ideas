@@ -1,0 +1,74 @@
+ideas for zak (Z80 Abstractions for Kernels) language
+
+data types: void, bool, byte, word, pointer, struct, union?, enum?, array
+use IY for variable stack (totally separate to the SP return-address stack)
+initially, just a mechanism for linkage, local-variable allocation and type-safety
+i.e. ops are things like foo += bar; if (#C) {baz--; ret;}
+so no expression evaluation, just the operations that map naturally onto Z80 opcodes
+of course, sometimes that will still require some cleverness, but hopefully it'll be minimal
+will need a macroexpansion facility
+would be nice to have inline functions for things like 32-bit arithmetic (and even 16-bit multiplies etc)
+
+when in doubt, try to be C-like
+
+compiler will have to do register allocation, which means taking into account the Z80's operand restrictions
+initially, make no attempt to do optimisation in the compiler beyond 'sane code generation' and reg. alloc.
+
+calling conventions:
+* anything but SP and IY (and R, I suppose) is callee-clobbered
+* return value location:
+	- bool: CF
+	- byte, enum: A
+	- word, pointer: HL
+	- struct, union: caller-stack, compiler passes pointer as extra argument
+	- array: forbidden
+* argument locations:
+	may be specified as part of function signature ("byte do_something(word __BC src, word __DE dst);")
+	otherwise, everything is passed on the stack
+	stack size per function is restricted to 255 bytes, so big structs or arrays on stack hurt!
+
+Caller constructs the initial stack frame.  It starts with 'byte frame_len; word save_sp;', which is used only for debugging purposes, but _always_ present
+frame_len does not include these three bytes.  save_sp is the value of SP before the CALL, so *(word *)(save_sp-2) contains the return address
+Then follow the arguments, in listed order (a struct- or union-return pointer goes first)
+Callee then extends this stack frame to make room for its local variables; it modifies frame_len (if we're paranoid, it first checks the old value)
+On return, callee simply RETs, and caller has nothing to do
+However, caller might decide to extend its stack frame further, overwriting the stale callee stack frame.  This might be done to minimise total stack usage (eg. we put something big on the stack after the last call), but relies on the compiler KNOWING the flow of control and that there's no way we can end up having overlapping liveness, which is probably more optimisation than a first version needs.
+
+for our first version, we don't include array support
+
+Parsing notes:
+
+In file scope we allow:
+	[storage] type [data [= initialiser] [, data [= initialiser] [...]]]; // global variable declarations, including function declaration without definition
+	[storage] type function ( argument-list ) { local-variables function-body } // function definition
+where 'type' can be a builtin type or 'struct tag [{ declaration-list }]'
+where 'data' can be derived (e.g. *data to make it a pointer; data(argument-list) making it a function declaration, or even (*data)(argument-or-type-list) making it a function pointer)
+where 'storage' is one of:
+	auto
+	static
+	extern
+where the rump form '[storage] type;' is only sensible if type is a struct, but there's no need to forbid it otherwise
+
+In an argument-list we allow:
+	type name [, type name [...]]
+where, again, name can be derived.  In an argument-or-type-list, each 'name' is optional.
+
+In local-variables we allow:
+	[storage] type data [= initialiser] [, data [= initialiser] [...]]; // local variable declarations
+where 'data' can be derived but must not be a function declaration (though it may be a function pointer).
+
+In a function-body we allow:
+	[identifier assign-ish] expression;
+
+A declarator (a.k.a. derived identifier) is one of:
+	identifier
+	( declarator )
+	* declarator
+	declarator ( argument-or-type-list )
+	qualifier declarator
+
+A qualifier is one of:
+	const
+
+List of all keywords:
+auto static extern const return struct void bool byte word if goto

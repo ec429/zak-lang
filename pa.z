@@ -1,0 +1,7 @@
+void pa(void)
+{
+	byte a;
+	byte *b;
+
+	*b = a;
+}

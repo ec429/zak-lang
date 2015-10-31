@@ -1,0 +1,5 @@
+byte sum(byte a, byte b)
+{
+	a += b;
+	return a;
+}
