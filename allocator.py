@@ -97,10 +97,18 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLAdd(%s, %s)'%(self.dst, self.src)
-    def __init__(self, func, decl, globs):
+    def __init__(self, func, name, globs):
+        if name is None:
+            decl = None
+            sc = None
+        else:
+            if name not in globs:
+                raise AllocError(name, "not in global scope")
+            sc, decl = globs[name]
         self.func = func
+        self.sc = sc or LEX.Auto("auto")
         self.decl = decl
-        self.names = dict((name, (LEX.Extern("extern"), typ)) for (name, sc, typ, _) in globs)
+        self.names = dict((name, (LEX.Extern("extern"), typ)) for name, (sc, typ) in globs.items())
         self.stack = {}
         self.sp = 0
         self.static = {}
@@ -353,6 +361,16 @@ class Allocator(object):
                 print "RTL output:"
                 pprint.pprint(self.code)
 
+## Entry point
+
+def alloc(parse_tree, tac):
+    allocations = {}
+    for name, func in tac.functions.items():
+        alloc = Allocator(func, name, tac.scopes[0])
+        alloc.allocate()
+        allocations[name] = alloc
+    return allocations
+
 ## Test code
 
 if __name__ == "__main__":
@@ -374,12 +392,6 @@ if __name__ == "__main__":
     allocations = {}
     for name, func in tac.functions.items():
         print "Allocating", name or "globals"
-        if name is None:
-            decl = None
-        else:
-            if name not in tac.scopes[0]:
-                raise AllocError(name, "not in global scope")
-            decl = tac.scopes[0][name][1]
-        alloc = Allocator(func, decl, parse_tree.globals)
+        alloc = Allocator(func, name, tac.scopes[0])
         alloc.allocate()
         allocations[name] = alloc

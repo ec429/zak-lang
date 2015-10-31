@@ -1,3 +1,5 @@
+byte proto(byte);
+
 byte sum(byte a, byte b)
 {
 	a += b;

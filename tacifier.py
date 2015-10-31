@@ -179,16 +179,28 @@ class TACifier(object):
         name, sc, decl, init = declaration
         if name in self.scopes[-1]:
             raise TACError("Identifier", name, "redefined in same scope")
+        if sc is None:
+            if isinstance(decl, PAR.FunctionDecl):
+                sc = LEX.Extern("extern")
+            else:
+                sc = LEX.Auto("auto")
         self.scopes[-1][name] = (sc, decl)
-        rvalue, rs = self.get_rvalue(init)
-        stmts.extend(rs)
-        if not isinstance(rvalue, self.Identifier):
-            raise TACError("Uninterpreted rvalue", rvalue)
-        if isinstance(rvalue.name, self.Gensym):
-            stmts.append(self.TACRename(name, rvalue))
+        if isinstance(sc, LEX.Auto):
+            rvalue, rs = self.get_rvalue(init)
+            stmts.extend(rs)
+            if not isinstance(rvalue, self.Identifier):
+                raise TACError("Uninterpreted rvalue", rvalue)
+            if isinstance(rvalue.name, self.Gensym):
+                stmts.append(self.TACRename(name, rvalue))
+            else:
+                stmts.insert(0, self.TACDeclare(name, sc, decl))
+                stmts.append(self.TACAssign(name, rvalue))
+        elif isinstance(sc, LEX.Extern):
+            if init is not None:
+                raise TACError("extern variable", name, "has initialiser", init)
+            stmts.append(self.TACDeclare(name, sc, decl))
         else:
-            stmts.insert(0, self.TACDeclare(name, sc, decl))
-            stmts.append(self.TACAssign(name, rvalue))
+            raise NotImplementedError(sc)
         return stmts
     def walk(self, block):
         func = []
@@ -215,20 +227,27 @@ class TACifier(object):
                 t.rename(rename.src.name, rename.dst)
         return declares + the_rest
     def add(self, name, sc, decl, init):
-        if isinstance(decl, PAR.FunctionDecl) and isinstance(init, PAR.BlockStatement):
-            if isinstance(sc, LEX.Extern):
-                raise TACError("extern function with definition")
-            if self.in_func is not None: # should be impossible, parser won't allow it
-                raise TACError("Nested function definition")
-            self.in_func = (name, decl)
-            self.scopes.append(self.arg_list(decl.arglist))
-            func = self.walk(init)
-            self.scopes.pop(-1)
-            self.in_func = None
-            self.functions[name] = self.normalise(func)
-            self.scopes[-1][name] = (sc, decl)
+        if isinstance(decl, PAR.FunctionDecl):
+            if isinstance(init, PAR.BlockStatement):
+                if isinstance(sc, LEX.Extern):
+                    raise TACError("extern function with definition")
+                if self.in_func is not None: # should be impossible, parser won't allow it
+                    raise TACError("Nested function definition")
+                self.in_func = (name, decl)
+                self.scopes.append(self.arg_list(decl.arglist))
+                func = self.walk(init)
+                self.scopes.pop(-1)
+                self.in_func = None
+                self.functions[name] = self.normalise(func)
+                self.scopes[-1][name] = (sc, decl)
+            else: # function declaration without definition
+                if not isinstance(sc, LEX.Extern):
+                    if sc:
+                        raise TACError("function prototype is", sc)
+                    sc = LEX.Extern("extern")
+                self.scopes[-1][name] = (sc, decl)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(decl, init)
 
 ## Entry point
 def tacify(parse_tree):
