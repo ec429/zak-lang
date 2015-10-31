@@ -28,7 +28,7 @@ calling conventions:
 	stack size per function is restricted to 255 bytes, so big structs or arrays on stack hurt!
 
 Caller constructs the initial stack frame.  It starts with 'byte frame_len;', which is used only for debugging purposes, but _always_ present
-frame_len does not include itself in the length.
+frame_len does not include itself in the length.  IY points to the byte _after_ frame_len.
 Then follow the arguments, in listed order (a struct- or union-return pointer goes first)
 Caller makes the call with PUSH IY;CALL callee
 Callee then extends this stack frame to make room for its local variables; it modifies frame_len (if we're paranoid, it first checks the old value)

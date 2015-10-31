@@ -22,8 +22,12 @@ class Register(object):
     def available(self):
         return not self.user
     def claim(self, user):
+        if not self.available:
+            raise AllocError("Attempted to claim %s, in use by %s"%(self.name, self.user))
         self.user = user
     def free(self):
+        if self.locked:
+            raise AllocError("Attempted to free %s, locked by %s"%(self.name, self.user))
         self.user = None
     @property
     def locked(self):
@@ -157,6 +161,8 @@ class Allocator(object):
                     self.sp += size
                 else:
                     raise NotImplementedError(t.sc)
+    def is_on_stack(self, name):
+        return name in self.stack
     def spill(self, r):
         if r.user:
             name = r.user
@@ -175,7 +181,7 @@ class Allocator(object):
         assert name in self.names
         assert r.available
         self.code.append(self.RTLFill(r, name))
-        r.user = name
+        r.claim(name)
     def choose_byte_register(self, spill=True):
         # prefer BCDEHL (prefer a reg whose partner is in use), then A, then spill from BCDEHL
         for r in self.general_byte_registers:
@@ -201,7 +207,10 @@ class Allocator(object):
         reg = self.reg_find_byte(src)
         if reg is None:
             # no; we'll have to load it into one
-            reg = self.choose_byte_register()
+            if self.is_on_stack(src):
+                reg = self.choose_byte_register()
+            else: # LD A,(nn)
+                reg = self.claim_a(name)
             self.fill(reg, src)
         return reg
     def reg_find_byte(self, name):
@@ -216,20 +225,33 @@ class Allocator(object):
             if r.user == name:
                 return r
         return
+    def claim_a(self, name):
+        a = self.register('A')
+        if a.user != name:
+            if not a.available:
+                move = self.choose_byte_register(False)
+                if move:
+                    move.claim(a.user)
+                    self.code.append(self.RTLMove(move, a))
+                    a.free()
+                else:
+                    self.spill(a)
+            a.claim(name)
+        return a
     def load_byte_into_a(self, name):
         a = self.register('A')
         if a.user != name:
             if not a.available:
                 move = self.choose_byte_register(False)
                 if move:
-                    move.user = a.user
+                    move.claim(a.user)
                     self.code.append(self.RTLMove(move, a))
                     a.free()
                 else:
                     self.spill(a)
             r = self.reg_find_byte(name)
             if r:
-                a.user = r.user
+                a.claim(r.user)
                 self.code.append(self.RTLMove(a, r))
                 r.free()
             else:
@@ -264,7 +286,7 @@ class Allocator(object):
                         self.spill(a)
                     r = self.reg_find_byte(t.src)
                     if r:
-                        a.user = r.user
+                        a.claim(r.user)
                         self.code.append(self.RTLMove(a, r))
                         r.free()
                     else:
@@ -297,7 +319,7 @@ class Allocator(object):
                         p.lock() # don't try to use H or L
                         r = self.choose_byte_register()
                         p.unlock()
-                        r.user = t.dst # no need to fill, as we're assigning to it
+                        r.claim(t.dst) # no need to fill, as we're assigning to it
                 elif (r == self.register('A')):
                     # LD A,(pp)
                     raise NotImplementedError(r, p)
@@ -314,11 +336,11 @@ class Allocator(object):
                     p.lock() # don't try to use H or L
                     r = self.choose_byte_register()
                     p.unlock()
-                    r.user = t.dst # no need to fill, as we're assigning to it
+                    r.claim(t.dst) # no need to fill, as we're assigning to it
                 elif self.register('A').available and not r:
                     # LD A,(pp)
                     r = self.register('A')
-                    r.user = t.dst # no need to fill, as we're assigning to it
+                    r.claim(t.dst) # no need to fill, as we're assigning to it
                     p = self.choose_word_register()
                     self.fill(p, t.src)
                 else:
