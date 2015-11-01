@@ -104,11 +104,9 @@ class TACifier(object):
                 self.func = src
             if self.ret == dst:
                 self.ret = src
-            for arg in self.args: # (sym, stmts)
-                if arg[0] == dst:
-                    arg[0] = src
-                for t in arg[1]:
-                    t.rename(dst, src)
+            for arg in self.args:
+                if arg == dst:
+                    arg = src
         def __repr__(self):
             return 'TACCall(%r, %r, %r)'%(self.func, self.ret, self.args)
     class TACReturn(TACStatement):
@@ -221,10 +219,10 @@ class TACifier(object):
             return (self.Identifier(typ, sym), stmts)
         if isinstance(rval, PAR.Literal):
             typ = PAR.ValueOfType('byte')
-            return (self.Identifier(typ, rval.value), [])
+            return (self.Identifier(typ, rval), [])
         if isinstance(rval, PAR.LongLiteral):
             typ = PAR.ValueOfType('word')
-            return (self.Identifier(typ, rval.value), [])
+            return (self.Identifier(typ, rval), [])
         if isinstance(rval, PAR.StringLiteral):
             sym = self.gensym()
             typ = PAR.Pointer(PAR.ValueOfType('byte'))
@@ -242,6 +240,8 @@ class TACifier(object):
             raise TACError("Uninterpreted lvalue", lvalue)
         if not isinstance(rvalue, self.Identifier):
             raise TACError("Uninterpreted rvalue", rvalue)
+        if isinstance(rvalue.typ, PAR.Array): # 'decay' to a pointer
+            rvalue.typ = PAR.Pointer(rvalue.typ.pointee)
         if isinstance(lvalue.typ, PAR.Pointer) and isinstance(op, (LEX.Add, LEX.Subtract)):
             if rvalue.typ not in (PAR.ValueOfType('byte'), PAR.ValueOfType('word')):
                 raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
@@ -272,7 +272,7 @@ class TACifier(object):
                     self.TACReturn(sym)]
         raise TACError("Uninterpreted rvalue", rvalue)
     def walk_expr(self, expr): # this always returns an rvalue
-        if isinstance(expr, PAR.IdentifierExpression):
+        if isinstance(expr, (PAR.IdentifierExpression, PAR.Literal, PAR.LongLiteral)):
             return self.get_rvalue(expr)
         if isinstance(expr, PAR.AssignIsh):
             lval = expr.left
@@ -315,22 +315,23 @@ class TACifier(object):
             rtyp = func.typ.bound
             atyp = func.typ.arglist
             args = []
+            stmts = []
             types = []
             for a in expr.args.args:
-                arg = self.get_rvalue(a)
+                arg, st = self.get_rvalue(a)
                 args.append(arg)
-                types.append((None, arg[0].typ))
+                stmts.extend(st)
+                types.append((None, arg.typ))
             if atyp != PAR.ArgList(types):
                 self.err(atyp)
                 self.err(PAR.ArgList(types))
                 raise TACError("Parameter types don't match in call", expr)
+            if rtyp == PAR.ValueOfType('void'):
+                return (None, fs + stmts + [self.TACCall(func, None, args)])
             sym = self.gensym()
             self.scopes[-1][sym] = (LEX.Auto('auto'), rtyp)
-            return (sym, [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs +
+            return (sym, [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs + stmts +
                          [self.TACCall(func, sym, args)])
-        if isinstance(expr, PAR.Literal):
-            typ = PAR.ValueOfType('byte')
-            return (self.Identifier(typ, expr.value), [])
         raise NotImplementedError(expr)
     def walk_stmt(self, stmt):
         if isinstance(stmt, PAR.ExpressionStatement):
@@ -365,6 +366,10 @@ class TACifier(object):
                 stmts.append(self.TACDeclare(name, sc, decl))
             else:
                 rvalue, rs = self.get_rvalue(init)
+                if decl != rvalue.typ:
+                    self.err("Want: %r"%(decl,))
+                    self.err("Have: %r"%(rvalue.typ,))
+                    raise TACError("Initialiser for %s has wrong type"%(name,))
                 stmts.extend(rs)
                 if not isinstance(rvalue, self.Identifier):
                     raise TACError("Uninterpreted rvalue", rvalue)
@@ -413,7 +418,7 @@ class TACifier(object):
         return [t for t in func if not isinstance(t, self.TACRename)]
     def evaluate_constant(self, expr):
         if isinstance(expr, (PAR.Literal, PAR.LongLiteral)):
-            return expr.value
+            return expr
         raise NotImplementedError(expr)
     def add(self, name, sc, decl, init):
         code = self.functions[self.in_func]

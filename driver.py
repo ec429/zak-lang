@@ -41,7 +41,7 @@ if __name__ == "__main__":
         for name, rtl in allocations.items():
             print rtl.sc, name
             print rtl.stack
-            print rtl.code
+            pprint.pprint(rtl.code)
             print
         print
     if opts.debug: print "-CODE/GEN-"

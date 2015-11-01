@@ -126,11 +126,14 @@ class GlobalGenerator(Generator):
             else:
                 self.data.append(".globl %s ; %s"%(name,typ))
                 self.data.append("%s:"%(name,))
-                if isinstance(init, int):
-                    if size == 1:
-                        self.data.append("\t.byte %d"%(init&0xff,))
-                    else:
-                        raise NotImplementedError(size)
+                if isinstance(init, PAR.Literal):
+                    if typ != PAR.ValueOfType('byte'):
+                        raise GenError("Literal", init, "doesn't match type", typ, "of", name)
+                    self.data.append("\t.byte %d"%(init.value,))
+                elif isinstance(init, PAR.LongLiteral):
+                    if typ != PAR.ValueOfType('word'):
+                        raise GenError("Literal", init, "doesn't match type", typ, "of", name)
+                    self.data.append("\t.word %d"%(init.value,))
                 else:
                     raise NotImplementedError(init)
 
