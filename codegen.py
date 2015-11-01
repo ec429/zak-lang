@@ -98,7 +98,7 @@ class FunctionGenerator(Generator):
     def generate(self):
         if not isinstance(self.rtl.sc, LEX.Auto): # e.g. static
             raise NotImplementedError(self.rtl.sc)
-        self.text.append(".globl %s"%(self.name,))
+        self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
         self.text.append("%s:"%(self.name,))
         self.extend_stack_frame()
         for op in self.rtl.code:
@@ -120,7 +120,7 @@ class GlobalGenerator(Generator):
                 self.data.append("%s:"%(name,))
                 if isinstance(init, int):
                     if size == 1:
-                        self.text.append("\t.byte %d"%(init&0xff,))
+                        self.data.append("\t.byte %d"%(init&0xff,))
                     else:
                         raise NotImplementedError(size)
                 else:
@@ -134,13 +134,14 @@ def generate(allocations):
         if name is None:
             gen = GlobalGenerator(rtl, name)
             gen.generate()
-            gen.print_stats()
             generated[name] = gen
         else:
             gen = FunctionGenerator(rtl, name)
             gen.generate()
-            gen.print_stats()
             generated[name] = gen
+    return generated
+
+def combine(generated):
     bss = []
     data = []
     text = []
