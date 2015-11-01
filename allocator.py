@@ -73,6 +73,16 @@ class Allocator(object):
         def __repr__(self):
             return '%s()'%(self.__class__.__name__,)
     class RTLReturn(RTLStatement): pass
+    class RTLLabel(RTLStatement):
+        def __init__(self, name):
+            self.name = name
+        def __repr__(self):
+            return 'RTLLabel(%s)'%(self.name,)
+    class RTLJump(RTLStatement):
+        def __init__(self, label):
+            self.label = label
+        def __repr__(self):
+            return 'RTLJump(%s)'%(self.label,)
     class RTLSpill(RTLStatement):
         def __init__(self, reg, name):
             self.reg = reg
@@ -465,14 +475,23 @@ class Allocator(object):
                     if c.user:
                         rv[str(c)] = c.user
         return rv
+    @property
+    def void_function(self):
+        if not isinstance(self.decl, PAR.FunctionDecl): # can't happen
+            raise TACError("Not in a function")
+        return self.decl.bound == PAR.ValueOfType("void")
     def allocate_registers(self):
         for t in self.func:
             try:
                 self.tac_to_rtl(t)
             except:
-                print "in TAC:", pprint.pformat(t)
-                print "with regs:", pprint.pformat(self.current_register_allocations)
+                self.err("in TAC: %s"%(pprint.pformat(t),))
+                self.err("with regs: %s"%(pprint.pformat(self.current_register_allocations),))
                 raise
+        if not self.code or not isinstance(self.code[-1], (self.RTLReturn, self.RTLJump)):
+            if not self.void_function:
+                raise AllocError("Control reached end of non-void function")
+            self.code.append(self.RTLReturn())
     def gather_initialisers(self):
         self.inits = {}
         for t in self.func:
@@ -489,13 +508,19 @@ class Allocator(object):
             else:
                 raise NotImplementedError(t)
     def allocate(self):
-        if self.name is not None:
-            self.allocate_params()
-        self.allocate_locals()
-        if self.name is not None:
-            self.allocate_registers()
-        else:
-            self.gather_initialisers()
+        try:
+            if self.name is not None:
+                self.allocate_params()
+            self.allocate_locals()
+            if self.name is not None:
+                self.allocate_registers()
+            else:
+                self.gather_initialisers()
+        except:
+            self.err("In: %s %r"%(self.name, self.decl))
+            raise
+    def err(self, text):
+        print >>sys.stderr, text
 
 ## Entry point
 

@@ -131,19 +131,16 @@ class Lexer(object):
         RE = r'->'
 
     class Number(Token): pass
-
     class LiteralDec(Number):
         RE = r'[1-9][0-9]*'
         def __init__(self, raw):
             super(Lexer.LiteralDec, self).__init__(raw)
             self.value = int(raw, 10)
-
     class LiteralHex(Number):
         RE = r'0x[0-9a-fA-F]+'
         def __init__(self, raw):
             super(Lexer.LiteralHex, self).__init__(raw)
             self.value = int(raw, 16)
-
     class LiteralOct(Number):
         # Notice the slight oddity that 0 is an octal, rather than a decimal, literal.
         # It makes no difference, as it's the same number either way
@@ -151,6 +148,24 @@ class Lexer(object):
         def __init__(self, raw):
             super(Lexer.LiteralOct, self).__init__(raw)
             self.value = int(raw, 8)
+    class LongNumber(Number): pass
+    class LongDec(LongNumber):
+        RE = r'[1-9][0-9]*[lL]'
+        def __init__(self, raw):
+            super(Lexer.LongDec, self).__init__(raw)
+            self.value = int(raw[:-1], 10)
+    class LongHex(LongNumber):
+        RE = r'0x[0-9a-fA-F]+[lL]'
+        def __init__(self, raw):
+            super(Lexer.LongHex, self).__init__(raw)
+            self.value = int(raw[:-1], 16)
+    class LongOct(LongNumber):
+        # Notice the slight oddity that 0 is an octal, rather than a decimal, literal.
+        # It makes no difference, as it's the same number either way
+        RE = r'0[0-7]*[lL]'
+        def __init__(self, raw):
+            super(Lexer.LongOct, self).__init__(raw)
+            self.value = int(raw[:-1], 8)
 
     class String(Token):
         RE = r'"(?:[^"]|\\")*"'
@@ -165,7 +180,7 @@ class Lexer(object):
               CommentToEOL, WingedComment,
               Assignment, Add, Subtract, Incr, Decr, Not, Dot, Memb,
               Equal, NotEqual, LessThan, LessOrEqual, GreaterThan, GreaterOrEqual,
-              LiteralDec, LiteralHex, LiteralOct, String]
+              LiteralDec, LiteralHex, LiteralOct, LongDec, LongHex, LongOct, String]
 
     def __init__(self):
         self.tres = [(t, re.compile(t.RE)) for t in self.tokens]
@@ -234,6 +249,14 @@ class Parser(object):
             return 'Pointer(%r)'%(self.pointee,)
         def __eq__(self, other):
             return isinstance(other, Parser.Pointer) and self.pointee == other.pointee
+    class Array(Declarator):
+        def __init__(self, pointee, n):
+            self.pointee = pointee
+            self.n = n
+        def __repr__(self):
+            return 'Array(%r, %r)'%(self.pointee, self.n)
+        def __eq__(self, other):
+            return isinstance(other, Parser.Array) and self.pointee == other.pointee and self.n == other.n
     class ParenDecl(Declarator): # does not escape into type definitions
         def __init__(self, contents):
             self.contents = contents
@@ -247,22 +270,31 @@ class Parser(object):
             return 'FunctionDecl(%r, %r)'%(self.bound, self.arglist)
         def __eq__(self, other):
             return isinstance(other, Parser.FunctionDecl) and self.arglist == other.arglist
-    class ArgList(object):
+    class ArgList(Declarator):
         def __init__(self, args):
             self.args = args
         def __repr__(self):
             return 'ArgList(%r)'%(self.args,)
         def __eq__(self, other):
-            if not isinstance(other, Parser.Arglist) and len(self.args) == len(other.args): return False
+            if not isinstance(other, Parser.ArgList) and len(self.args) == len(other.args): return False
             for s, o in zip(self.args, other.args):
                 if s[1] != o[1]: return False # only compare types, not names
             return True
     class Expression(object): pass
     class Literal(Expression):
         def __init__(self, value):
+            if value > 255 or value < -128:
+                raise ParseError("Value out of range for literal", value)
             self.value = value
         def __repr__(self):
             return 'Literal(%d)'%(self.value,)
+    class LongLiteral(Expression):
+        def __init__(self, value):
+            if value > 65535 or value < -32768:
+                raise ParseError("Value out of range for long literal", value)
+            self.value = value
+        def __repr__(self):
+            return 'LongLiteral(%d)'%(self.value,)
     class StringLiteral(Expression):
         def __init__(self, value):
             self.value = value
@@ -459,7 +491,9 @@ class Parser(object):
         return self.BlockStatement(local, body)
     def parse_expression(self, tokens, context=None):
         left = None
-        if isinstance(tokens[0], Lexer.Number):
+        if isinstance(tokens[0], Lexer.LongNumber):
+            left = self.LongLiteral(tokens.pop(0).value)
+        elif isinstance(tokens[0], Lexer.Number):
             left = self.Literal(tokens.pop(0).value)
         elif isinstance(tokens[0], Lexer.String):
             left = self.StringLiteral(tokens.pop(0).str)

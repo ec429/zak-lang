@@ -17,7 +17,8 @@ class TACifier(object):
             self.sc = sc
             self.typ = typ
         def rename(self, dst, src):
-            raise NotImplementedError()
+            if self.name == dst:
+                raise TACError("Tried to rename", self, "to", src)
         def __repr__(self):
             return 'TACDeclare(%r, %r, %r)'%(self.name, self.sc, self.typ)
     class TACInitGlobal(TACStatement):
@@ -32,6 +33,9 @@ class TACifier(object):
         def __init__(self, dst, src):
             self.dst = dst
             self.src = src
+        def rename(self, dst, src):
+            # I don't know if this should be allowed.  But hopefully not.
+            raise TACError("Tried to rename(%r, %r, %r)"%(self, dst, src))
         def __repr__(self):
             return 'TACRename(%r, %r)'%(self.dst, self.src)
     class TACDeref(TACStatement): # read through a pointer
@@ -90,6 +94,23 @@ class TACifier(object):
                 self.src = src
         def __repr__(self):
             return 'TACAdd(%r, %r)'%(self.dst, self.src)
+    class TACCall(TACStatement):
+        def __init__(self, func, ret, args):
+            self.func = func
+            self.ret = ret
+            self.args = args
+        def rename(self, dst, src):
+            if self.func == dst:
+                self.func = src
+            if self.ret == dst:
+                self.ret = src
+            for arg in self.args: # (sym, stmts)
+                if arg[0] == dst:
+                    arg[0] = src
+                for t in arg[1]:
+                    t.rename(dst, src)
+        def __repr__(self):
+            return 'TACCall(%r, %r, %r)'%(self.func, self.ret, self.args)
     class TACReturn(TACStatement):
         def __init__(self, src):
             self.src = src
@@ -98,6 +119,27 @@ class TACifier(object):
                 self.src = src
         def __repr__(self):
             return 'TACReturn(%r)'%(self.src,)
+    class TACLabel(TACStatement):
+        def __init__(self, name):
+            self.name = name
+        def rename(self, dst, src): pass # nothing to do
+        def __repr__(self):
+            return 'TACLabel(%s)'%(self.name,)
+    class TACGoto(TACStatement):
+        def __init__(self, label):
+            self.label = label
+        def rename(self, dst, src): pass # nothing to do
+        def __repr__(self):
+            return 'TACGoto(%s)'%(self.label,)
+    class TACIf(TACStatement):
+        def __init__(self, cond, count):
+            self.cond = cond
+            self.count = count # number of following statements to only run if cond is true
+        def rename(self, dst, src):
+            if self.cond == dst:
+                self.cond = src
+        def __repr__(self):
+            return 'TACIf(%r, %d)'%(self.cond,self.count)
     class Value(object):
         def __init__(self, typ):
             self.typ = typ
@@ -132,6 +174,7 @@ class TACifier(object):
         self.scopes = [{}]
         self.functions = {None:[]}
         self.in_func = None
+        self.strings = {}
         self.gennum = 0
     def arg_list(self, arglist):
         scope = {}
@@ -176,13 +219,33 @@ class TACifier(object):
             stmts.append(self.TACDeclare(sym, LEX.Auto('auto'), typ))
             stmts.append(self.TACDeref(sym, pointee.name))
             return (self.Identifier(typ, sym), stmts)
+        if isinstance(rval, PAR.Literal):
+            typ = PAR.ValueOfType('byte')
+            return (self.Identifier(typ, rval.value), [])
+        if isinstance(rval, PAR.LongLiteral):
+            typ = PAR.ValueOfType('word')
+            return (self.Identifier(typ, rval.value), [])
+        if isinstance(rval, PAR.StringLiteral):
+            sym = self.gensym()
+            typ = PAR.Pointer(PAR.ValueOfType('byte'))
+            self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
+            stmts = [self.TACDeclare(sym, LEX.Auto('auto'), typ)]
+            string = self.gensym()
+            self.strings[string] = rval.value
+            styp = PAR.Array(PAR.ValueOfType('byte'), len(rval.value) + 1)
+            stmts.append(self.TACDeclare(string, LEX.Static('static'), styp))
+            stmts.append(self.TACAssign(sym, string))
+            return (self.Identifier(typ, sym), stmts)
         raise NotImplementedError(rval)
     def emit_assignish(self, op, lvalue, rvalue):
         if not isinstance(lvalue, self.Identifier):
             raise TACError("Uninterpreted lvalue", lvalue)
         if not isinstance(rvalue, self.Identifier):
             raise TACError("Uninterpreted rvalue", rvalue)
-        if lvalue.typ != rvalue.typ:
+        if isinstance(lvalue.typ, PAR.Pointer) and isinstance(op, (LEX.Add, LEX.Subtract)):
+            if rvalue.typ not in (PAR.ValueOfType('byte'), PAR.ValueOfType('word')):
+                raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
+        elif lvalue.typ != rvalue.typ:
             raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
         if isinstance(op, LEX.Add):
             return [self.TACAdd(lvalue.name, rvalue.name)]
@@ -208,23 +271,66 @@ class TACifier(object):
                     self.TACRename(sym, rvalue),
                     self.TACReturn(sym)]
         raise TACError("Uninterpreted rvalue", rvalue)
-    def walk_expr(self, expr):
+    def walk_expr(self, expr): # this always returns an rvalue
         if isinstance(expr, PAR.IdentifierExpression):
             return self.get_rvalue(expr)
         if isinstance(expr, PAR.AssignIsh):
-            op = expr.op
             lval = expr.left
             rval = expr.right
             lvalue, pre, post = self.get_lvalue(lval)
             rvalue, rs = self.get_rvalue(rval)
-            return (lvalue, rs + pre + self.emit_assignish(op, lvalue, rvalue) + post) # lvalue becomes an rvalue, returns the value written
+            return (lvalue, rs + pre + self.emit_assignish(expr.op, lvalue, rvalue) + post) # lvalue becomes an rvalue, returns the value written
         if isinstance(expr, PAR.Comparison):
-            op = expr.op
             left, ls = self.get_rvalue(expr.left)
             right, rs = self.get_rvalue(expr.right)
             sym = self.genbool() # either use in a conditional context, or assign (really Rename) to a variable
             # note that we don't TACDeclare sym, nor add it to the scope
-            return (sym, ls + rs + [self.TACCompare(op, left, right)])
+            return (sym, ls + rs + [self.TACCompare(expr.op, left, right)])
+        if isinstance(expr, PAR.Postcrement):
+            if isinstance(expr.op, LEX.Incr):
+                crement = 1
+            elif isinstance(expr.op, LEX.Dccr):
+                crement = -1
+            else: # can't happen
+                raise TACError("Weird excrement op", expr) # well, what would _you_ call the set {increment, decrement}?
+            lvalue, pre, post = self.get_lvalue(expr.erand)
+            sym = self.gensym()
+            typ = lvalue.typ
+            self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
+            return (sym, [self.TACDeclare(sym, LEX.Auto('auto'), typ)] + pre +
+                         [self.TACAssign(sym, lvalue), self.TACAdd(lvalue, crement)] + post)
+        if isinstance(expr, PAR.Precrement):
+            if isinstance(expr.op, LEX.Incr):
+                crement = 1
+            elif isinstance(expr.op, LEX.Dccr):
+                crement = -1
+            else: # can't happen
+                raise TACError("Weird excrement op", expr)
+            lvalue, pre, post = self.get_lvalue(expr.erand)
+            return (lvalue, pre + [self.TACAdd(lvalue, crement)] + post)
+        if isinstance(expr, PAR.FunctionCall):
+            func, fs = self.get_rvalue(expr.func)
+            if not isinstance(func.typ, PAR.FunctionDecl):
+                raise TACError("Calling non-function", expr, "is", func)
+            rtyp = func.typ.bound
+            atyp = func.typ.arglist
+            args = []
+            types = []
+            for a in expr.args.args:
+                arg = self.get_rvalue(a)
+                args.append(arg)
+                types.append((None, arg[0].typ))
+            if atyp != PAR.ArgList(types):
+                self.err(atyp)
+                self.err(PAR.ArgList(types))
+                raise TACError("Parameter types don't match in call", expr)
+            sym = self.gensym()
+            self.scopes[-1][sym] = (LEX.Auto('auto'), rtyp)
+            return (sym, [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs +
+                         [self.TACCall(func, sym, args)])
+        if isinstance(expr, PAR.Literal):
+            typ = PAR.ValueOfType('byte')
+            return (self.Identifier(typ, expr.value), [])
         raise NotImplementedError(expr)
     def walk_stmt(self, stmt):
         if isinstance(stmt, PAR.ExpressionStatement):
@@ -233,6 +339,14 @@ class TACifier(object):
         elif isinstance(stmt, PAR.ReturnStatement):
             rvalue, stmts = self.walk_expr(stmt.expr)
             return stmts + self.emit_return(rvalue)
+        elif isinstance(stmt, PAR.Label):
+            return [self.TACLabel(stmt.name)]
+        elif isinstance(stmt, PAR.IfStatement):
+            cond, stmts = self.walk_expr(stmt.cond)
+            then = self.walk_stmt(stmt.then)
+            return stmts + [self.TACIf(cond, len(then))] + then
+        elif isinstance(stmt, PAR.GotoStatement):
+            return [self.TACGoto(stmt.label)]
         else:
             raise NotImplementedError(stmt)
     def declare(self, declaration):
@@ -266,12 +380,6 @@ class TACifier(object):
         else:
             raise NotImplementedError(sc)
         return stmts
-    def in_void_function(self):
-        if not self.in_func: return False
-        name, decl = self.in_func
-        if not isinstance(decl, PAR.FunctionDecl): # can't happen
-            raise TACError("In a weird function", name, decl)
-        return decl.bound == PAR.ValueOfType("void")
     def walk(self, block):
         func = []
         for declaration in block.local:
@@ -286,14 +394,9 @@ class TACifier(object):
             except:
                 self.err("In stmt %r"%(stmt,))
                 raise
-        if not (func and isinstance(func[-1], self.TACReturn)): # XXX also TACJump
-            if self.in_void_function:
-                func.append(self.TACReturn(None))
-            else:
-                raise TACError("Control reached end of non-void function", self.in_func[0])
         return func
     def normalise(self, func):
-        # Hoick all Declares to the beginning, and apply any Renames
+        # apply any Renames
         declares = [t for t in func if isinstance(t, self.TACDeclare)]
         renames = [t for t in func if isinstance(t, self.TACRename)]
         the_rest = [t for t in func if not isinstance(t, (self.TACDeclare, self.TACRename))]
@@ -307,9 +410,9 @@ class TACifier(object):
                     raise TACError("Found no TACDeclare matching", rename)
             for t in the_rest:
                 t.rename(rename.src, rename.dst)
-        return declares + the_rest
+        return [t for t in func if not isinstance(t, self.TACRename)]
     def evaluate_constant(self, expr):
-        if isinstance(expr, PAR.Literal):
+        if isinstance(expr, (PAR.Literal, PAR.LongLiteral)):
             return expr.value
         raise NotImplementedError(expr)
     def add(self, name, sc, decl, init):

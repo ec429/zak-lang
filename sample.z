@@ -3,6 +3,7 @@ word; // like, yeah, man!
 byte foo, *bar;
 extern word baz;
 static byte answer_to_everything = 42;
+word taxicab = 1729l;
 
 byte (*f)(byte); // declares f as pointer to function (byte) returning byte
 byte *g(byte); // declares g as function (byte) returning pointer to byte
