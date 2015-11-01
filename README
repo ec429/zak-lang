@@ -23,10 +23,12 @@ Writing the kernel for pegboard (my SMP Z80 architecture, see
 
 How?
 ----
-./driver.py [<infile>] [-o <outfile>] [-D]
+./driver.py [<infile>] [-o <outfile>] [-D] [-n]
 If <infile> is omitted, standard input is used.
 If -o <outfile> is omitted, it defaults to 'a.out'.
 -D enables debugging output (probably only useful for the compiler developer).
+-n or --dry-run disables the writing of the output file, thus just checking
+ whether the input can be compiled.  Again, probably mostly useful with -D.
 
 Who?
 ----

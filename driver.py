@@ -1,12 +1,13 @@
 #!/usr/bin/python
 
-import optparse, pprint
+import optparse, pprint, sys
 import parser, tacifier, allocator, codegen
 
 def parse_args():
     x = optparse.OptionParser()
     x.add_option('-o', '--output', type='string', default="a.out")
     x.add_option('-D', '--debug', action='store_true')
+    x.add_option('-n', '--dry-run', action='store_true')
     opts, args = x.parse_args()
     if len(args) > 1:
         x.error("Multiple input files - only one supported")
@@ -47,30 +48,26 @@ if __name__ == "__main__":
             print name
             g.print_stats()
     bss, data, text = codegen.combine(gen)
-    dest = open(opts.output, 'w')
+    outs = []
     if opts.debug:
         print "==ASSEMBLY OUTPUT BEGINS HERE=="
+        outs.append(sys.stdout)
+    if not opts.dry_run:
+        dest = open(opts.output, 'w')
+        outs.append(dest)
+    def pr(line):
+        for out in outs:
+            out.write(line)
+            out.write('\n')
     if bss:
-        if opts.debug:
-            print ".bss"
-        print >>dest, ".bss"
+        pr(".bss")
         for line in bss:
-            if opts.debug:
-                print line
-            print >>dest, line
+            pr(line)
     if data:
-        if opts.debug:
-            print ".data"
-        print >>dest, ".data"
+        pr(".data")
         for line in data:
-            if opts.debug:
-                print line
-            print >>dest, line
+            pr(line)
     if text:
-        if opts.debug:
-            print ".text"
-        print >>dest, ".text"
+        pr(".text")
         for line in text:
-            if opts.debug:
-                print line
-            print >>dest, line
+            pr(line)
