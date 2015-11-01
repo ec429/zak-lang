@@ -38,6 +38,7 @@ class Register(object):
         self._lock = False
     def __str__(self):
         return self.name
+    __repr__ = __str__
 class ByteRegister(Register):
     size = 1
 class WordRegister(Register):
@@ -59,6 +60,7 @@ class SplittableRegister(WordRegister):
     def __init__(self, name):
         super(SplittableRegister, self).__init__(name)
         self.children = [SplitByteRegister(n, self) for n in name]
+        self.hi, self.lo = self.children
     @property
     def available(self):
         return not (self.user or any(c.user for c in self.children))
