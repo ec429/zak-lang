@@ -491,6 +491,11 @@ class Allocator(object):
         if not self.code or not isinstance(self.code[-1], (self.RTLReturn, self.RTLJump)):
             if not self.void_function:
                 raise AllocError("Control reached end of non-void function")
+            # Spill all variables before function return
+            # (if they're local or clean, we can optimise the spills away later)
+            for r in self.registers:
+                if not r.available:
+                    self.spill(r)
             self.code.append(self.RTLReturn())
     def gather_initialisers(self):
         self.inits = {}
