@@ -5,8 +5,11 @@ What?
 -----
 A vaguely C-like language designed for low-level system programming on the
  Zilog Z80 processor.
-A toolchain for use with this language (currently just a parser, but will
- eventually include a compiler).
+A toolchain for use with this language, which compiles it to assembly language
+ in the format accepted by GNU 'as' for the Z80.  (The compiler is implemented
+ in Python.)
+It's not finished yet; only a very restricted subset of the language makes it
+ through all the stages without hitting any NotImplementedErrors.
 
 Why?
 ----
@@ -18,7 +21,17 @@ Writing the kernel for pegboard (my SMP Z80 architecture, see
  specify register linkage of some parameters) to make life easier for callees
  written in asm.
 
+How?
+----
+./driver.py [<infile>] [-o <outfile>] [-D]
+If <infile> is omitted, standard input is used.
+If -o <outfile> is omitted, it defaults to 'a.out'.
+-D enables debugging output (probably only useful for the compiler developer).
+
 Who?
 ----
 Developed by Edward Cree (ec429).
-Licensed under the GNU GPL version 2.
+Compiler and example programs licensed under the GNU GPL version 2.  (To be
+ absolutely clear: the compiler's license does _not_ infect the assembly
+ output it generates, which is subject only to the licenses applying to the
+ source files used as input.)
