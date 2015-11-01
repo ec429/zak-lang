@@ -67,6 +67,18 @@ class TACifier(object):
                 self.src = src
         def __repr__(self):
             return 'TACAssign(%r, %r)'%(self.dst, self.src)
+    class TACCompare(TACStatement):
+        def __init__(self, op, left, right):
+            self.op = op.raw
+            self.left = left
+            self.right = right
+        def rename(self, dst, src):
+            if self.left == dst:
+                self.left = src
+            if self.right == dst:
+                self.right = src
+        def __repr__(self):
+            return 'TACCompare(%s, %r, %r)'%(self.op, self.left, self.right)
     class TACAdd(TACStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -105,10 +117,17 @@ class TACifier(object):
             self.n = n
         def __repr__(self):
             return '$(%d)'%(self.n,)
+    class Genbool(Gensym):
+        def __repr__(self):
+            return '?(%d)'%(self.n,)
     def gensym(self):
         n = self.gennum
         self.gennum += 1
         return self.Gensym(n)
+    def genbool(self):
+        n = self.gennum
+        self.gennum += 1
+        return self.Genbool(n)
     def __init__(self):
         self.scopes = [{}]
         self.functions = {None:[]}
@@ -179,6 +198,15 @@ class TACifier(object):
             if typ != rvalue.typ:
                 raise TACError("Type mismatch returning", rvalue, "from", decl)
             return [self.TACReturn(rvalue.name)]
+        if isinstance(rvalue, self.Genbool):
+            sym = self.gensym()
+            styp = PAR.ValueOfType('bool')
+            if typ != styp:
+                raise TACError("Type mismatch returning", rvalue, "from", decl)
+            self.scopes[-1][sym] = (LEX.Auto('auto'), styp)
+            return [self.TACDeclare(sym, LEX.Auto('auto'), styp),
+                    self.TACRename(sym, rvalue),
+                    self.TACReturn(sym)]
         raise TACError("Uninterpreted rvalue", rvalue)
     def walk_expr(self, expr):
         if isinstance(expr, PAR.IdentifierExpression):
@@ -190,6 +218,13 @@ class TACifier(object):
             lvalue, pre, post = self.get_lvalue(lval)
             rvalue, rs = self.get_rvalue(rval)
             return (lvalue, rs + pre + self.emit_assignish(op, lvalue, rvalue) + post) # lvalue becomes an rvalue, returns the value written
+        if isinstance(expr, PAR.Comparison):
+            op = expr.op
+            left, ls = self.get_rvalue(expr.left)
+            right, rs = self.get_rvalue(expr.right)
+            sym = self.genbool() # either use in a conditional context, or assign (really Rename) to a variable
+            # note that we don't TACDeclare sym, nor add it to the scope
+            return (sym, ls + rs + [self.TACCompare(op, left, right)])
         raise NotImplementedError(expr)
     def walk_stmt(self, stmt):
         if isinstance(stmt, PAR.ExpressionStatement):
@@ -220,7 +255,7 @@ class TACifier(object):
                 if not isinstance(rvalue, self.Identifier):
                     raise TACError("Uninterpreted rvalue", rvalue)
                 if isinstance(rvalue.name, self.Gensym):
-                    stmts.append(self.TACRename(name, rvalue))
+                    stmts.append(self.TACRename(name, rvalue.name))
                 else:
                     stmts.insert(0, self.TACDeclare(name, sc, decl))
                     stmts.append(self.TACAssign(name, rvalue))
@@ -240,9 +275,17 @@ class TACifier(object):
     def walk(self, block):
         func = []
         for declaration in block.local:
-            func.extend(self.declare(declaration))
+            try:
+                func.extend(self.declare(declaration))
+            except:
+                self.err("In declaration %r"%(declaration,))
+                raise
         for stmt in block.body:
-            func.extend(self.walk_stmt(stmt))
+            try:
+                func.extend(self.walk_stmt(stmt))
+            except:
+                self.err("In stmt %r"%(stmt,))
+                raise
         if not (func and isinstance(func[-1], self.TACReturn)): # XXX also TACJump
             if self.in_void_function:
                 func.append(self.TACReturn(None))
@@ -255,16 +298,15 @@ class TACifier(object):
         renames = [t for t in func if isinstance(t, self.TACRename)]
         the_rest = [t for t in func if not isinstance(t, (self.TACDeclare, self.TACRename))]
         for rename in renames:
-            for declare in declares:
-                if declare.name == rename.src.name:
-                    if declare.typ != rename.src.typ:
-                        raise TACError("Type mismatch normalising", rename, "on", declare)
-                    declare.name = rename.dst
-                    break
-            else:
-                raise TACError("Found no TACDeclare matching", rename)
+            if not isinstance(rename.src, self.Genbool):
+                for declare in declares:
+                    if declare.name == rename.src:
+                        declare.name = rename.dst
+                        break
+                else:
+                    raise TACError("Found no TACDeclare matching", rename)
             for t in the_rest:
-                t.rename(rename.src.name, rename.dst)
+                t.rename(rename.src, rename.dst)
         return declares + the_rest
     def evaluate_constant(self, expr):
         if isinstance(expr, PAR.Literal):
@@ -280,7 +322,12 @@ class TACifier(object):
                     raise TACError("Nested function definition")
                 self.in_func = (name, decl)
                 self.scopes.append(self.arg_list(decl.arglist))
-                func = self.walk(init)
+                try:
+                    func = self.walk(init)
+                except:
+                    self.err("In: %s %r"%(name, decl))
+                    self.err(pprint.pformat(init))
+                    raise
                 self.scopes.pop(-1)
                 self.in_func = None
                 self.functions[name] = self.normalise(func)
@@ -291,7 +338,7 @@ class TACifier(object):
                         raise TACError("function prototype is", sc)
                     sc = LEX.Extern("extern")
                 self.scopes[-1][name] = (sc, decl)
-        elif isinstance(decl, PAR.ValueOfType):
+        elif isinstance(decl, (PAR.ValueOfType, PAR.Pointer)):
             if not isinstance(sc, LEX.Extern):
                 if sc is None:
                     sc = LEX.Auto("auto")
@@ -302,6 +349,8 @@ class TACifier(object):
             self.scopes[-1][name] = (sc, decl)
         else:
             raise NotImplementedError(decl, init)
+    def err(self, text):
+        print >>sys.stderr, text
 
 ## Entry point
 def tacify(parse_tree):

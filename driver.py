@@ -20,11 +20,13 @@ if __name__ == "__main__":
             source = f.read()
     else:
         source = sys.stdin.read()
+    if opts.debug: print "-LEX/PARSE-"
     parse_tree = parser.parse(source)
     if opts.debug:
         print "Parse globals:"
         pprint.pprint(parse_tree.globals)
         print
+    if opts.debug: print "-TACIFY-"
     tac = tacifier.tacify(parse_tree)
     if opts.debug:
         print "TAC functions:"
@@ -32,6 +34,7 @@ if __name__ == "__main__":
         print
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
+    if opts.debug: print "-ALLOC/RTL-"
     allocations = allocator.alloc(parse_tree, tac)
     if opts.debug:
         print "RTL functions:"
@@ -41,6 +44,7 @@ if __name__ == "__main__":
             print rtl.code
             print
         print
+    if opts.debug: print "-CODE/GEN-"
     gen = codegen.generate(allocations)
     if opts.debug:
         print "Generated line counts:"
