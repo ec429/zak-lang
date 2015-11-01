@@ -77,7 +77,15 @@ class FunctionGenerator(Generator):
             if op.dst.size == 1:
                 self.text.append("\tLD %s,(%s)"%(op.dst, op.src))
             else:
-                raise NotImplementedError(size)
+                raise NotImplementedError(op.dst.size)
+        elif isinstance(op, RTL.RTLWrite):
+            assert isinstance(op.dst, REG), op
+            assert isinstance(op.src, REG), op
+            assert op.dst.size == 2, op
+            if op.src.size == 1:
+                self.text.append("\tLD (%s),%s"%(op.dst, op.src))
+            else:
+                raise NotImplementedError(op.src.size)
         elif isinstance(op, RTL.RTLMove):
             assert isinstance(op.dst, REG), op
             assert isinstance(op.src, REG), op

@@ -97,6 +97,12 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLDeref(%s, %s)'%(self.dst, self.src)
+    class RTLWrite(RTLStatement):
+        def __init__(self, dst, src):
+            self.dst = dst
+            self.src = src
+        def __repr__(self):
+            return 'RTLWrite(%s, %s)'%(self.dst, self.src)
     class RTLAdd(RTLStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -144,13 +150,18 @@ class Allocator(object):
     def allocate_params(self):
         if not isinstance(self.decl, PAR.FunctionDecl): # can't happen
             raise AllocError(self.decl, "is not a FunctionDecl")
-        for nam,typ in self.decl.arglist.args:
-            size = self.sizeof(typ)
-            self.stack[nam] = (self.sp, typ, size)
-            self.names[nam] = (LEX.Auto("auto"), typ)
-            self.sp += size
-            if self.sp > 255: # we know that _all_ these will have to have real stack slots, unlike locals
-                raise AllocError("No room on stack for param", nam, typ, size)
+        if not self.decl.arglist.args:
+            raise AllocError(self.decl, "has no arglist")
+        if len(self.decl.arglist.args) == 1 and self.decl.arglist.args[0][1] == PAR.ValueOfType("void"):
+            pass # no arguments
+        else:
+            for nam,typ in self.decl.arglist.args:
+                size = self.sizeof(typ)
+                self.stack[nam] = (self.sp, typ, size)
+                self.names[nam] = (LEX.Auto("auto"), typ)
+                self.sp += size
+                if self.sp > 255: # we know that _all_ these will have to have real stack slots, unlike locals
+                    raise AllocError("No room on stack for param", nam, typ, size)
         self.caller_stack_size = self.sp
     def allocate_locals(self):
         for t in self.func:
@@ -205,6 +216,12 @@ class Allocator(object):
         if not spill: return
         raise NotImplementedError("choose spill")
     def fetch_src_byte(self, src):
+        if src not in self.names:
+            raise AllocError("Name not found", src)
+        sc, typ = self.names[src]
+        size = self.sizeof(typ)
+        if size != 1:
+            raise AllocError("Wrong size:", src, "is", typ, "of size", size)
         # is it already in a register?
         reg = self.reg_find_byte(src)
         if reg is None:
@@ -212,7 +229,7 @@ class Allocator(object):
             if self.is_on_stack(src):
                 reg = self.choose_byte_register()
             else: # LD A,(nn)
-                reg = self.claim_a(name)
+                reg = self.free_a(name)
             self.fill(reg, src)
         return reg
     def reg_find_byte(self, name):
@@ -227,7 +244,7 @@ class Allocator(object):
             if r.user == name:
                 return r
         return
-    def claim_a(self, name):
+    def free_a(self, name):
         a = self.register('A')
         if a.user != name:
             if not a.available:
@@ -238,8 +255,19 @@ class Allocator(object):
                     a.free()
                 else:
                     self.spill(a)
-            a.claim(name)
         return a
+    def free_hl(self, name):
+        hl = self.register('HL')
+        if hl.user != name:
+            if not hl.available:
+                move = self.choose_word_register(False)
+                if move:
+                    move.claim(hl.user)
+                    self.code.append(self.RTLMove(move, hl))
+                    hl.free()
+                else:
+                    self.spill(hl)
+        return hl
     def load_byte_into_a(self, name):
         a = self.register('A')
         if a.user != name:
@@ -261,6 +289,23 @@ class Allocator(object):
         return a
     def tac_to_rtl(self, t):
         if isinstance(t, TAC.TACDeclare): return
+        if isinstance(t, TAC.TACAssign):
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            sc, typ = self.names[t.dst]
+            size = self.sizeof(typ)
+            if size == 1:
+                s = self.fetch_src_byte(t.src)
+                s.lock()
+                r = self.reg_find_byte(t.dst)
+                if r is None:
+                    r = self.choose_byte_register()
+                    r.claim(t.dst) # no need to fill, as we're assigning to it
+                self.code.append(self.RTLMove(r, s))
+                s.unlock()
+                return
+            else:
+                raise NotImplementedError(size)
         if isinstance(t, TAC.TACAdd):
             if t.dst not in self.names:
                 raise AllocError("Name not found", t.dst)
@@ -270,31 +315,32 @@ class Allocator(object):
                 a = self.load_byte_into_a(t.dst)
                 a.lock()
                 r = self.fetch_src_byte(t.src)
-                a.unlock()
                 self.code.append(self.RTLAdd(a, r))
+                a.unlock()
                 return
             else:
                 raise NotImplementedError(size)
         if isinstance(t, TAC.TACReturn):
-            if t.src not in self.names:
-                raise AllocError("Name not found", t.src)
-            sc, typ = self.names[t.src]
-            size = self.sizeof(typ)
-            if size == 1: # return in A
-                # No point trying to avoid spills, we're about to return
-                a = self.register('A')
-                if a.user != t.src:
-                    if not a.available:
-                        self.spill(a)
-                    r = self.reg_find_byte(t.src)
-                    if r:
-                        a.claim(r.user)
-                        self.code.append(self.RTLMove(a, r))
-                        r.free()
-                    else:
-                        self.fill(a, t.src)
-            else:
-                raise NotImplementedError(size)
+            if t.src is not None: # else return type is void and there's nothing to return
+                if t.src not in self.names:
+                    raise AllocError("Name not found", t.src)
+                sc, typ = self.names[t.src]
+                size = self.sizeof(typ)
+                if size == 1: # return in A
+                    # No point trying to avoid spills, we're about to return
+                    a = self.register('A')
+                    if a.user != t.src:
+                        if not a.available:
+                            self.spill(a)
+                        r = self.reg_find_byte(t.src)
+                        if r:
+                            a.claim(r.user)
+                            self.code.append(self.RTLMove(a, r))
+                            r.free()
+                        else:
+                            self.fill(a, t.src)
+                else:
+                    raise NotImplementedError(size)
             # Spill all variables before function return
             # (if they're local or clean, we can optimise the spills away later)
             for r in self.registers:
@@ -320,8 +366,8 @@ class Allocator(object):
                     if not r:
                         p.lock() # don't try to use H or L
                         r = self.choose_byte_register()
-                        p.unlock()
                         r.claim(t.dst) # no need to fill, as we're assigning to it
+                        p.unlock()
                 elif (r == self.register('A')):
                     # LD A,(pp)
                     raise NotImplementedError(r, p)
@@ -337,8 +383,8 @@ class Allocator(object):
                     self.fill(p, t.src)
                     p.lock() # don't try to use H or L
                     r = self.choose_byte_register()
-                    p.unlock()
                     r.claim(t.dst) # no need to fill, as we're assigning to it
+                    p.unlock()
                 elif self.register('A').available and not r:
                     # LD A,(pp)
                     r = self.register('A')
@@ -351,6 +397,61 @@ class Allocator(object):
                 return
             else:
                 r = self.reg_find_word(t.dst)
+                raise NotImplementedError(size)
+        if isinstance(t, TAC.TACWrite):
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            dsc, dtyp = self.names[t.dst]
+            if t.src not in self.names:
+                raise AllocError("Name not found", t.src)
+            ssc, styp = self.names[t.src]
+            if not isinstance(dtyp, PAR.Pointer):
+                raise AllocError("Not of pointer type", t.dst, dtyp)
+            p = self.reg_find_word(t.dst)
+            size = self.sizeof(styp)
+            if size == 1:
+                r = self.reg_find_byte(t.src)
+                if (p == self.register('HL')):
+                    # LD (HL),r
+                    if not r:
+                        p.lock() # don't try to use H or L
+                        r = self.fetch_src_byte(t.src)
+                        p.unlock()
+                elif (r == self.register('A')):
+                    # LD (pp),A
+                    raise NotImplementedError(r, p)
+                elif r and r.name not in 'HL':
+                    r.lock()
+                    # LD (HL),r
+                    if p:
+                        # PUSH/POP to swap it with HL
+                        raise NotImplementedError(r, p)
+                    else:
+                        p = self.free_hl(t.dst)
+                        self.fill(p, t.dst)
+                    r.unlock()
+                elif p:
+                    # LD (pp),A
+                    raise NotImplementedError(r, p)
+                elif self.register('HL').available: # r must be None (else r.name in 'HL', contra)
+                    # LD r,(HL)
+                    p = self.register('HL')
+                    self.fill(p, t.dst)
+                    p.lock() # don't try to use H or L
+                    r = self.fetch_src_byte(t.src)
+                    p.unlock()
+                elif self.register('A').available and not r:
+                    # LD (pp),A
+                    r = self.free_a()
+                    self.fill(r, t.src)
+                    p = self.choose_word_register()
+                    self.fill(p, t.src)
+                else:
+                    raise NotImplementedError(r, p)
+                self.code.append(self.RTLWrite(p, r))
+                return
+            else:
+                r = self.reg_find_word(t.src)
                 raise NotImplementedError(size)
         raise NotImplementedError(t)
     @property

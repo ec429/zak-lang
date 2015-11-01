@@ -37,6 +37,9 @@ Caller might then decide to extend its stack frame further, overwriting the stal
 
 for our first version, we don't include array support (but that will be needed _fairly_ soon after)
 
+Beware! (differences from C):
+The assign-ish operators return _the value written_, not the contents of the variable written to.  Because that's waaay easier to implement.
+
 Parsing notes:
 
 In file scope we allow:
