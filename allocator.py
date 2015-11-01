@@ -104,6 +104,7 @@ class Allocator(object):
         def __repr__(self):
             return 'RTLAdd(%s, %s)'%(self.dst, self.src)
     def __init__(self, func, name, globs):
+        self.name = name
         if name is None:
             decl = None
             sc = None
@@ -141,7 +142,6 @@ class Allocator(object):
             return 2
         raise NotImplementedError("sizeof", typ)
     def allocate_params(self):
-        if self.decl is None: return
         if not isinstance(self.decl, PAR.FunctionDecl): # can't happen
             raise AllocError(self.decl, "is not a FunctionDecl")
         for nam,typ in self.decl.arglist.args:
@@ -372,11 +372,29 @@ class Allocator(object):
                 print "in TAC:", pprint.pformat(t)
                 print "with regs:", pprint.pformat(self.current_register_allocations)
                 raise
+    def gather_initialisers(self):
+        self.inits = {}
+        for t in self.func:
+            if isinstance(t, TAC.TACDeclare):
+                if t.name not in self.stack: # can't happen
+                    raise AllocError("Declared unknown global", t)
+                self.inits[t.name] = None
+            elif isinstance(t, TAC.TACInitGlobal):
+                if t.name not in self.inits: # can't happen
+                    raise AllocError("Initialised undeclared global", t)
+                if self.inits[t.name] is not None: # also can't happen
+                    raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.name])
+                self.inits[t.name] = t.value
+            else:
+                raise NotImplementedError(t)
     def allocate(self):
-        self.allocate_params()
+        if self.name is not None:
+            self.allocate_params()
         self.allocate_locals()
-        if self.decl is not None:
+        if self.name is not None:
             self.allocate_registers()
+        else:
+            self.gather_initialisers()
 
 ## Entry point
 

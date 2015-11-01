@@ -20,6 +20,14 @@ class TACifier(object):
             raise NotImplementedError()
         def __repr__(self):
             return 'TACDeclare(%r, %r, %r)'%(self.name, self.sc, self.typ)
+    class TACInitGlobal(TACStatement):
+        def __init__(self, name, value):
+            self.name = name
+            self.value = value
+        def rename(self, dst, src):
+            raise NotImplementedError()
+        def __repr__(self):
+            return 'TACInitGlobal(%r, %r)'%(self.name, self.value)
     class TACRename(TACStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -226,7 +234,12 @@ class TACifier(object):
             for t in the_rest:
                 t.rename(rename.src.name, rename.dst)
         return declares + the_rest
+    def evaluate_constant(self, expr):
+        if isinstance(expr, PAR.Literal):
+            return expr.value
+        raise NotImplementedError(expr)
     def add(self, name, sc, decl, init):
+        code = self.functions[self.in_func]
         if isinstance(decl, PAR.FunctionDecl):
             if isinstance(init, PAR.BlockStatement):
                 if isinstance(sc, LEX.Extern):
@@ -246,6 +259,15 @@ class TACifier(object):
                         raise TACError("function prototype is", sc)
                     sc = LEX.Extern("extern")
                 self.scopes[-1][name] = (sc, decl)
+        elif isinstance(decl, PAR.ValueOfType):
+            if not isinstance(sc, LEX.Extern):
+                if sc is None:
+                    sc = LEX.Auto("auto")
+                code.append(self.TACDeclare(name, sc, decl))
+                if init is not None:
+                    value = self.evaluate_constant(init)
+                    code.append(self.TACInitGlobal(name, value))
+            self.scopes[-1][name] = (sc, decl)
         else:
             raise NotImplementedError(decl, init)
 

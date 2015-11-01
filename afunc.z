@@ -1,3 +1,5 @@
+byte ans = 42;
+
 byte proto(byte);
 
 byte sum(byte a, byte b)
