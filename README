@@ -30,6 +30,8 @@ If -o <outfile> is omitted, it defaults to 'a.out'.
 -n or --dry-run disables the writing of the output file, thus just checking
  whether the input can be compiled.  Again, probably mostly useful with -D.
 
+For implementation notes, see the file HACKING.
+
 Who?
 ----
 Developed by Edward Cree (ec429).
