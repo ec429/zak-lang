@@ -7,6 +7,7 @@ PAR = parser.Parser
 TAC = tacifier.TACifier
 REG = allocator.Register
 RTL = allocator.Allocator
+Flag = allocator.Flag
 
 class GenError(Exception): pass
 
@@ -82,7 +83,10 @@ class FunctionGenerator(Generator):
                 if op.reg.name == 'A':
                     raise NotImplementedError("Spill A to static %s"%(op.name,))
                 else:
-                    raise GenError("Spill", op.reg, "to static", op.name)
+                    self.text.append("\tPUSH AF")
+                    self.text.append("\tLD A,%s"%(op.reg,))
+                    self.text.append("\tLD (%s),A"%(op.name,))
+                    self.text.append("\tPOP AF")
         elif isinstance(op, RTL.RTLDeref):
             assert isinstance(op.dst, REG), op
             assert isinstance(op.src, REG), op
@@ -128,6 +132,9 @@ class FunctionGenerator(Generator):
             elif isinstance(op.src, TAC.Gensym):
                 # we assume it's a global one, and thus its name exists
                 self.text.append("\tLD %s,%s"%(op.dst, self.staticname(op.src)))
+            elif isinstance(op.src, PAR.Literal):
+                assert op.dst.size == 1, op
+                self.text.append("\tLD %s,%d"%(op.dst, op.src.value))
             else:
                 raise NotImplementedError(op.src)
         elif isinstance(op, RTL.RTLAdd):
@@ -137,8 +144,30 @@ class FunctionGenerator(Generator):
                     if op.src.size != 1: # should never happen
                         raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
                     self.text.append("\tADD %s"%(op.src,))
+            elif isinstance(op.src, PAR.Literal):
+                assert op.dst.size == 1, op
+                if op.src.value == 1:
+                    self.text.append("\tINC %s"%(op.dst,))
+                else:
+                    raise NotImplementedError(op)
             elif isinstance(op.src, PAR.LongLiteral):
-                raise GenError("16-bit literal add", op)
+                if op.src.value == 1:
+                    self.text.append("\tINC %s"%(op.dst,))
+                elif op.src.value == -1:
+                    raise NotImplementedError(op)
+                else:
+                    raise GenError("16-bit literal add", op)
+            else:
+                raise NotImplementedError(op)
+        elif isinstance(op, RTL.RTLCp):
+            assert isinstance(op.dst, REG), op
+            if isinstance(op.src, REG):
+                if op.dst.name == 'A': # 8-bit add
+                    if op.src.size != 1: # should never happen
+                        raise GenError("Cp A with %s (%d)"%(op.src, op.src.size))
+                    self.text.append("\tCP %s"%(op.src,))
+            elif isinstance(op.src, PAR.LongLiteral):
+                raise GenError("16-bit literal compare", op)
             else:
                 raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLPush):
@@ -147,9 +176,16 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLPop):
             assert isinstance(op.dst, REG), op
             self.text.append("\tPOP %s"%(op.dst,))
+        elif isinstance(op, RTL.RTLLabel):
+            assert isinstance(op.name, str), op
+            self.text.append("%s:"%(op.name,))
         elif isinstance(op, RTL.RTLCall):
             assert isinstance(op.addr, str), op
             self.text.append("\tCALL %s"%(op.addr,))
+        elif isinstance(op, RTL.RTLCJump):
+            assert isinstance(op.label, str), op
+            assert isinstance(op.flag, Flag)
+            self.text.append("\tJR %s,%s"%(op.flag.name, op.label))
         else:
             raise NotImplementedError(op)
     def generate(self):

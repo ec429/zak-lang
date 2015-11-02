@@ -79,7 +79,7 @@ class Flag(object):
     def __init__(self, name):
         self.name = name
     def __repr__(self):
-        return self.name
+        return '#'+self.name
 
 class Allocator(object):
     class RTLStatement(object):
@@ -200,8 +200,7 @@ class Allocator(object):
         self.general_byte_registers = [self.register(n) for n in 'BCDEHL']
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
-        self.all_flags = [Flag('#S'), Flag('#Z'), Flag('#H'), Flag('#V'), Flag('#N'), Flag('#C')] # excludes the undocumented 5 and 3 flags
-        self.flags = None # symbol (of bool type) currently stored in flags
+        self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
         self.gen = 0
         self.counters = []
         self.code = []
@@ -209,10 +208,6 @@ class Allocator(object):
         n = self.gen
         self.gen += 1
         return '_%s_%d'%(self.name, n)
-    def flag(self, name):
-        for f in self.all_flags:
-            if f.name == name: return f
-        raise AllocError("No such flag", name)
     def register(self, name):
         for r in self.registers:
             if r.name == name: return r
@@ -440,15 +435,21 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(a, r))
                 a.unlock()
                 return
-            elif size == 2: # dst has to be in HL, src has to be in a register (even if literal)
-                hl = self.load_word_into_hl(t.dst)
-                hl.lock()
+            elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
                 if isinstance(t.src, (PAR.Literal, PAR.LongLiteral)):
+                    if t.src.value in [1, -1]:
+                        r = self.fetch_src_word(t.dst)
+                        self.code.append(self.RTLAdd(r, t.src))
+                        return
+                    hl = self.load_word_into_hl(t.dst)
+                    hl.lock()
                     r = self.choose_word_register()
                     self.fill(r, t.src)
                     self.code.append(self.RTLAdd(hl, r))
                     hl.unlock()
                     return
+                hl = self.load_word_into_hl(t.dst)
+                hl.lock()
                 r = self.fetch_src_word(t.src)
                 self.code.append(self.RTLAdd(hl, r))
                 hl.unlock()
@@ -661,7 +662,7 @@ class Allocator(object):
                     self.code.append(self.RTLCp(a, r))
                     self.code.append(self.RTLMove(a, PAR.Literal(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
                     label = self.genlabel()
-                    self.code.append(self.RTLCJump(label, self.flag('#Z')))
+                    self.code.append(self.RTLCJump(label, Flag('Z')))
                     self.code.append(self.RTLAdd(a, PAR.Literal(1)))
                     self.code.append(self.RTLLabel(label))
                     a.user = t.dst
@@ -682,7 +683,7 @@ class Allocator(object):
                 a = self.load_byte_into_a(t.cond)
                 self.code.append(self.RTLAnd(a, a))
                 label = self.genlabel()
-                self.code.append(self.RTLCJump(label, self.flag('#Z')))
+                self.code.append(self.RTLCJump(label, Flag('Z')))
                 self.counters.append((t.count, label))
                 return
             raise NotImplementedError(size)
