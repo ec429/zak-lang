@@ -288,6 +288,8 @@ class Parser(object):
             self.value = value
         def __repr__(self):
             return 'Literal(%d)'%(self.value,)
+        def __eq__(self, other):
+            return isinstance(other, Parser.Literal) and self.value == other.value
     class LongLiteral(Expression):
         def __init__(self, value):
             if value > 65535 or value < -32768:
@@ -295,6 +297,8 @@ class Parser(object):
             self.value = value
         def __repr__(self):
             return 'LongLiteral(%d)'%(self.value,)
+        def __eq__(self, other):
+            return isinstance(other, Parser.LongLiteral) and self.value == other.value
     class StringLiteral(Expression):
         def __init__(self, value):
             self.value = value

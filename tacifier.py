@@ -71,6 +71,17 @@ class TACifier(object):
                 self.src = src
         def __repr__(self):
             return 'TACAssign(%r, %r)'%(self.dst, self.src)
+    class TACAddress(TACStatement):
+        def __init__(self, dst, src):
+            self.dst = dst
+            self.src = src
+        def rename(self, dst, src):
+            if self.dst == dst:
+                self.dst = src
+            if self.src == dst:
+                self.src = src
+        def __repr__(self):
+            return 'TACAddress(%r, %r)'%(self.dst, self.src)
     class TACCompare(TACStatement):
         def __init__(self, dst, op, left, right):
             self.dst = dst
@@ -203,6 +214,7 @@ class TACifier(object):
             return (self.Identifier(typ, sym), pre, post)
         raise NotImplementedError(lval)
     def get_rvalue(self, rval):
+        # TODO check if returning an Array; if so, decay it to a pointer by taking its address
         if isinstance(rval, PAR.IdentifierExpression):
             for scope in reversed(self.scopes):
                 if rval.name in scope:
@@ -235,7 +247,7 @@ class TACifier(object):
             self.strings[string] = rval.value
             styp = PAR.Array(PAR.ValueOfType('byte'), len(rval.value) + 1)
             stmts.append(self.TACDeclare(string, LEX.Static('static'), styp))
-            stmts.append(self.TACAssign(sym, string))
+            stmts.append(self.TACAddress(sym, string))
             return (self.Identifier(typ, sym), stmts)
         raise NotImplementedError(rval)
     def emit_assignish(self, op, lvalue, rvalue):

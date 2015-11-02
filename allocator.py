@@ -236,7 +236,8 @@ class Allocator(object):
     def spill(self, r):
         if r.user:
             name = r.user
-            if isinstance(name, (PAR.Literal, PAR.LongLiteral)): # nothing to do
+            if isinstance(name, (PAR.Literal, PAR.LongLiteral)):
+                r.user = None # nothing to spill
                 return
             assert name in self.names
             self.code.append(self.RTLSpill(r, name))
@@ -253,7 +254,7 @@ class Allocator(object):
         assert name in self.names or isinstance(name, (PAR.Literal, PAR.LongLiteral))
         if r.user == name: # Nothing to do; we're already filled
             return
-        assert r.available
+        assert r.available, (r, r.user, name)
         self.code.append(self.RTLFill(r, name))
         r.claim(name)
     def choose_byte_register(self, spill=True):
@@ -417,6 +418,16 @@ class Allocator(object):
                 return
             else:
                 raise TACError("Tried to move an aggregate, size = %d"%(size,))
+        if isinstance(t, TAC.TACAddress):
+            if self.is_on_stack(t.src):
+                raise NotImplementedError(t)
+            else:
+                # it's static
+                r = self.reg_find_word(t.dst)
+                if r is None:
+                    r = self.choose_word_register()
+                self.code.append(self.RTLMove(r, t.src))
+                return
         if isinstance(t, TAC.TACAdd):
             if t.dst not in self.names:
                 raise AllocError("Name not found", t.dst)
@@ -429,9 +440,15 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(a, r))
                 a.unlock()
                 return
-            elif size == 2: # dst has to be in HL
+            elif size == 2: # dst has to be in HL, src has to be in a register (even if literal)
                 hl = self.load_word_into_hl(t.dst)
                 hl.lock()
+                if isinstance(t.src, (PAR.Literal, PAR.LongLiteral)):
+                    r = self.choose_word_register()
+                    self.fill(r, t.src)
+                    self.code.append(self.RTLAdd(hl, r))
+                    hl.unlock()
+                    return
                 r = self.fetch_src_word(t.src)
                 self.code.append(self.RTLAdd(hl, r))
                 hl.unlock()
@@ -577,7 +594,6 @@ class Allocator(object):
                 r = self.reg_find_word(t.src)
                 raise NotImplementedError(size)
         if isinstance(t, TAC.TACCall):
-            # t.(func, ret, args)
             # CALLING SEQUENCE
             # IX := IY
             # IX += caller-stack-size
@@ -604,7 +620,7 @@ class Allocator(object):
                 else:
                     raise NotImplementedError(size)
                 csp += size
-            self.code.append(self.RTLIndirectWrite(ix, -1, csp))
+            self.code.append(self.RTLIndirectWrite(ix, -1, PAR.Literal(csp)))
             # Spill all variables before function call
             # (if they're clean, we can optimise the spills away later)
             for r in self.registers:
@@ -612,7 +628,10 @@ class Allocator(object):
                     self.spill(r)
             self.code.append(self.RTLPush(iy))
             self.code.append(self.RTLMove(iy, ix))
-            self.code.append(self.RTLCall(t.func.name))
+            if self.is_on_stack(t.func.name):
+                raise NotImplementedError(t)
+            else:
+                self.code.append(self.RTLCall(t.func.name))
             self.code.append(self.RTLPop(iy))
             if t.ret is not None: # bind name with return value
                 rtyp = t.ret.type

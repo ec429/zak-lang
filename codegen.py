@@ -17,6 +17,10 @@ class Generator(object):
         self.text = []
         self.data = []
         self.bss = []
+    def staticname(self, name):
+        if isinstance(name, TAC.Gensym):
+            return '__gensym_%d'%(name.n,)
+        return name
     def print_stats(self):
         print "Lines: %d bss, %d data, %d text"%(len(self.bss), len(self.data), len(self.text))
 
@@ -47,9 +51,18 @@ class FunctionGenerator(Generator):
                     self.text.append("\tLD %s,(IY+%d)"%(op.reg.hi, offset+1))
                 else: # can't happen
                     raise GenError(size)
+            elif isinstance(op.name, PAR.Literal):
+                # if it's a word register, it auto-promotes the literal
+                self.text.append("\tLD %s,%d"%(op.reg, op.name.value))
+            elif isinstance(op.name, PAR.LongLiteral):
+                raise NotImplementedError(op)
             else:
                 if op.reg.name == 'A':
-                    raise NotImplementedError("Fill A with static %s"%(op.name,))
+                    name = self.staticname(op.name)
+                    self.text.append("\tLD A,(%s)"%(op.name,))
+                elif op.reg.name == 'HL':
+                    name = self.staticname(op.name)
+                    self.text.append("\tLD HL,(%s)"%(op.name,))
                 else:
                     raise GenError("Fill", op.reg, "with static", op.name)
         elif isinstance(op, RTL.RTLSpill):
@@ -86,31 +99,75 @@ class FunctionGenerator(Generator):
                 self.text.append("\tLD (%s),%s"%(op.dst, op.src))
             else:
                 raise NotImplementedError(op.src.size)
+        elif isinstance(op, RTL.RTLIndirectWrite):
+            assert isinstance(op.dst, REG), op
+            assert op.dst.size == 2, op
+            if isinstance(op.src, REG):
+                if op.src.size == 1:
+                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src))
+                elif op.src.size == 2:
+                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src.lo))
+                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset + 1, op.src.hi))
+                else:
+                    raise GenError(op.src.size)
+            elif isinstance(op.src, PAR.Literal):
+                self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src.value))
+            else:
+                raise GenError(op)
         elif isinstance(op, RTL.RTLMove):
             assert isinstance(op.dst, REG), op
-            assert isinstance(op.src, REG), op
-            assert op.dst.size == op.src.size, op
-            if op.dst.size == 1:
-                self.text.append("\tLD %s,%s"%(op.dst, op.src))
+            if isinstance(op.src, REG):
+                assert op.dst.size == op.src.size, op
+                if op.dst.size == 1:
+                    self.text.append("\tLD %s,%s"%(op.dst, op.src))
+                elif op.dst.size == 2:
+                    self.text.append("\tPUSH %s"%(op.src,))
+                    self.text.append("\tPOP %s"%(op.dst,))
+                else:
+                    raise GenError(op.dst.size)
+            elif isinstance(op.src, TAC.Gensym):
+                # we assume it's a global one, and thus its name exists
+                self.text.append("\tLD %s,%s"%(op.dst, self.staticname(op.src)))
             else:
-                raise NotImplementedError(size)
+                raise NotImplementedError(op.src)
         elif isinstance(op, RTL.RTLAdd):
             assert isinstance(op.dst, REG), op
+            if isinstance(op.src, REG):
+                if op.dst.name == 'A': # 8-bit add
+                    if op.src.size != 1: # should never happen
+                        raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
+                    self.text.append("\tADD %s"%(op.src,))
+            elif isinstance(op.src, PAR.LongLiteral):
+                raise GenError("16-bit literal add", op)
+            else:
+                raise NotImplementedError(op)
+        elif isinstance(op, RTL.RTLPush):
             assert isinstance(op.src, REG), op
-            if op.dst.name == 'A': # 8-bit add
-                if op.src.size != 1: # should never happen
-                    raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
-                self.text.append("\tADD %s"%(op.src,))
+            self.text.append("\tPUSH %s"%(op.src,))
+        elif isinstance(op, RTL.RTLPop):
+            assert isinstance(op.dst, REG), op
+            self.text.append("\tPOP %s"%(op.dst,))
+        elif isinstance(op, RTL.RTLCall):
+            assert isinstance(op.addr, str), op
+            self.text.append("\tCALL %s"%(op.addr,))
         else:
             raise NotImplementedError(op)
     def generate(self):
-        if not isinstance(self.rtl.sc, LEX.Auto): # e.g. static
-            raise NotImplementedError(self.rtl.sc)
-        self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
+        if isinstance(self.rtl.sc, LEX.Auto):
+            self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
+        elif not isinstance(self.rtl.sc, LEX.Static):
+            raise GenError("Unexplained storage class", self.rtl.sc)
         self.text.append("%s:"%(self.name,))
         self.extend_stack_frame()
         for op in self.rtl.code:
-            self.generate_op(op)
+            try:
+                self.generate_op(op)
+            except:
+                self.err("In func: %s %s"%(self.name, self.rtl.decl))
+                self.err("In op: %r"%(op,))
+                raise
+    def err(self, text):
+        print >>sys.stderr, text
 
 ## Generate assembler directives for the global variables
 
@@ -120,6 +177,7 @@ class GlobalGenerator(Generator):
             if name not in self.rtl.inits: # can't happen
                 raise GenError("Undeclared global", name)
             init = self.rtl.inits[name]
+            name = self.staticname(name)
             if init is None:
                 self.bss.append(".globl %s ; %s"%(name,typ))
                 self.bss.append("%s: .skip %d"%(name, size))
