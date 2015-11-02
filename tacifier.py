@@ -72,17 +72,20 @@ class TACifier(object):
         def __repr__(self):
             return 'TACAssign(%r, %r)'%(self.dst, self.src)
     class TACCompare(TACStatement):
-        def __init__(self, op, left, right):
+        def __init__(self, dst, op, left, right):
+            self.dst = dst
             self.op = op.raw
             self.left = left
             self.right = right
         def rename(self, dst, src):
+            if self.dst == dst:
+                self.dst = src
             if self.left == dst:
                 self.left = src
             if self.right == dst:
                 self.right = src
         def __repr__(self):
-            return 'TACCompare(%s, %r, %r)'%(self.op, self.left, self.right)
+            return 'TACCompare(%r, %s, %r, %r)'%(self.dst, self.op, self.left, self.right)
     class TACAdd(TACStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -285,7 +288,7 @@ class TACifier(object):
             right, rs = self.get_rvalue(expr.right)
             sym = self.genbool() # either use in a conditional context, or assign (really Rename) to a variable
             # note that we don't TACDeclare sym, nor add it to the scope
-            return (sym, ls + rs + [self.TACCompare(expr.op, left, right)])
+            return (sym, ls + rs + [self.TACCompare(sym, expr.op, left.name, right.name)])
         if isinstance(expr, PAR.Postcrement):
             if isinstance(expr.op, LEX.Incr):
                 crement = 1
@@ -296,9 +299,15 @@ class TACifier(object):
             lvalue, pre, post = self.get_lvalue(expr.erand)
             sym = self.gensym()
             typ = lvalue.typ
+            if typ == PAR.ValueOfType('byte'):
+                crement = PAR.Literal(crement)
+            elif typ == PAR.ValueOfType('word') or isinstance(typ, PAR.Pointer):
+                crement = PAR.LongLiteral(crement)
+            else:
+                raise TACError("Can't postcrement type", typ)
             self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
             return (sym, [self.TACDeclare(sym, LEX.Auto('auto'), typ)] + pre +
-                         [self.TACAssign(sym, lvalue), self.TACAdd(lvalue, crement)] + post)
+                         [self.TACAssign(sym, lvalue.name), self.TACAdd(lvalue.name, crement)] + post)
         if isinstance(expr, PAR.Precrement):
             if isinstance(expr.op, LEX.Incr):
                 crement = 1
@@ -307,7 +316,14 @@ class TACifier(object):
             else: # can't happen
                 raise TACError("Weird excrement op", expr)
             lvalue, pre, post = self.get_lvalue(expr.erand)
-            return (lvalue, pre + [self.TACAdd(lvalue, crement)] + post)
+            typ = lvalue.typ
+            if typ == PAR.ValueOfType('byte'):
+                crement = PAR.Literal(crement)
+            elif typ == PAR.ValueOfType('word') or isinstance(typ, PAR.Pointer):
+                crement = PAR.LongLiteral(crement)
+            else:
+                raise TACError("Can't postcrement type", typ)
+            return (lvalue, pre + [self.TACAdd(lvalue.name, crement)] + post)
         if isinstance(expr, PAR.FunctionCall):
             func, fs = self.get_rvalue(expr.func)
             if not isinstance(func.typ, PAR.FunctionDecl):
@@ -345,7 +361,7 @@ class TACifier(object):
         elif isinstance(stmt, PAR.IfStatement):
             cond, stmts = self.walk_expr(stmt.cond)
             then = self.walk_stmt(stmt.then)
-            return stmts + [self.TACIf(cond, len(then))] + then
+            return stmts + [self.TACIf(cond.name, len(then))] + then
         elif isinstance(stmt, PAR.GotoStatement):
             return [self.TACGoto(stmt.label)]
         else:

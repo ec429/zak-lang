@@ -75,6 +75,11 @@ class SplittableRegister(WordRegister):
     @property
     def locked(self):
         return self._lock or any(c._lock for c in self.children)
+class Flag(object):
+    def __init__(self, name):
+        self.name = name
+    def __repr__(self):
+        return self.name
 
 class Allocator(object):
     class RTLStatement(object):
@@ -96,6 +101,12 @@ class Allocator(object):
             self.label = label
         def __repr__(self):
             return 'RTLJump(%s)'%(self.label,)
+    class RTLCJump(RTLStatement):
+        def __init__(self, label, flag):
+            self.label = label
+            self.flag = flag
+        def __repr__(self):
+            return 'RTLCJump(%s, %r)'%(self.label, self.flag)
     class RTLSpill(RTLStatement):
         def __init__(self, reg, name):
             self.reg = reg
@@ -149,12 +160,24 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLIndirectWrite(%s, %d, %s)'%(self.dst, self.offset, self.src)
+    class RTLAnd(RTLStatement):
+        def __init__(self, dst, src):
+            self.dst = dst
+            self.src = src
+        def __repr__(self):
+            return 'RTLAnd(%s, %s)'%(self.dst, self.src)
     class RTLAdd(RTLStatement):
         def __init__(self, dst, src):
             self.dst = dst
             self.src = src
         def __repr__(self):
             return 'RTLAdd(%s, %s)'%(self.dst, self.src)
+    class RTLCp(RTLStatement):
+        def __init__(self, dst, src):
+            self.dst = dst
+            self.src = src
+        def __repr__(self):
+            return 'RTLCp(%s, %s)'%(self.dst, self.src)
     def __init__(self, func, name, globs):
         self.name = name
         if name is None:
@@ -177,7 +200,19 @@ class Allocator(object):
         self.general_byte_registers = [self.register(n) for n in 'BCDEHL']
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
+        self.all_flags = [Flag('#S'), Flag('#Z'), Flag('#H'), Flag('#V'), Flag('#N'), Flag('#C')] # excludes the undocumented 5 and 3 flags
+        self.flags = None # symbol (of bool type) currently stored in flags
+        self.gen = 0
+        self.counters = []
         self.code = []
+    def genlabel(self):
+        n = self.gen
+        self.gen += 1
+        return '_%s_%d'%(self.name, n)
+    def flag(self, name):
+        for f in self.all_flags:
+            if f.name == name: return f
+        raise AllocError("No such flag", name)
     def register(self, name):
         for r in self.registers:
             if r.name == name: return r
@@ -261,7 +296,7 @@ class Allocator(object):
             if self.is_on_stack(src):
                 reg = self.choose_byte_register()
             else: # LD A,(nn)
-                reg = self.free_a(name)
+                reg = self.free_a(src)
             self.fill(reg, src)
         return reg
     def fetch_src_word(self, src):
@@ -585,6 +620,56 @@ class Allocator(object):
                 print rsiz
                 raise NotImplementedError(rsiz)
             return
+        if isinstance(t, TAC.TACCompare):
+            if t.left not in self.names:
+                raise AllocError("Name not found", t.left)
+            sc, typ = self.names[t.left]
+            size = self.sizeof(typ)
+            if size == 1: # dst has to be in A
+                r = self.fetch_src_byte(t.right)
+                r.lock()
+                if r.name == 'A': # have to shunt it out of the way
+                    s = self.choose_byte_register()
+                    self.code.append(self.RTLMove(s, r))
+                    s.claim(r.user)
+                    s.lock()
+                    r.unlock()
+                    r.free()
+                    r = s
+                a = self.load_byte_into_a(t.left)
+                r.unlock()
+                if t.op == '==':
+                    self.code.append(self.RTLCp(a, r))
+                    self.code.append(self.RTLMove(a, PAR.Literal(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
+                    label = self.genlabel()
+                    self.code.append(self.RTLCJump(label, self.flag('#Z')))
+                    self.code.append(self.RTLAdd(a, PAR.Literal(1)))
+                    self.code.append(self.RTLLabel(label))
+                    a.user = t.dst
+                    return
+                raise NotImplementedError(t.op)
+            raise NotImplementedError(size)
+        if isinstance(t, TAC.TACLabel):
+            self.clobber_registers()
+            self.code.append(self.RTLLabel('_%s_%s'%(self.name, t.name)))
+            return
+        if isinstance(t, TAC.TACIf):
+            # t.(cond, count)
+            if t.cond not in self.names:
+                raise AllocError("Name not found", t.cond)
+            sc, typ = self.names[t.cond]
+            size = self.sizeof(typ)
+            if size == 1: # cond has to be in A
+                a = self.load_byte_into_a(t.cond)
+                self.code.append(self.RTLAnd(a, a))
+                label = self.genlabel()
+                self.code.append(self.RTLCJump(label, self.flag('#Z')))
+                self.counters.append((t.count, label))
+                return
+            raise NotImplementedError(size)
+        if isinstance(t, TAC.TACGoto):
+            self.code.append(self.RTLJump(t.label))
+            return
         raise NotImplementedError(t)
     def exdehl(self, follow):
         de = self.register('DE')
@@ -606,6 +691,15 @@ class Allocator(object):
         if follow is None:
             return
         raise AllocError("exdehl with follow", follow)
+    def clobber_registers(self):
+        for r in self.registers:
+            if r.locked:
+                raise AllocError("Clobbering locked register", r)
+            if not r.available:
+                self.spill(r)
+        if self.flags:
+            raise NotImplementedError("Spilling flags on clobber")
+            self.flags = None
     @property
     def current_register_allocations(self):
         rv = {}
@@ -665,12 +759,20 @@ class Allocator(object):
                     raise TACError(t.sc)
     def allocate_registers(self):
         for t in self.func:
+            self.counters = [(c - 1, l) for (c, l) in self.counters if c]
             try:
                 self.tac_to_rtl(t)
             except:
                 self.err("in TAC: %s"%(pprint.pformat(t),))
                 self.err("with regs: %s"%(pprint.pformat(self.current_register_allocations),))
                 raise
+            counted = [l for (c, l) in self.counters if not c]
+            if counted:
+                self.clobber_registers()
+                for l in counted:
+                    self.code.append(self.RTLLabel(l))
+        if any(c for (c, l) in self.counters): # can't happen
+            raise AllocError("Leftover counters", self.counters)
         if not self.code or not isinstance(self.code[-1], (self.RTLReturn, self.RTLJump)):
             if not self.void_function:
                 raise AllocError("Control reached end of non-void function")
