@@ -178,8 +178,10 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLCp(%s, %s)'%(self.dst, self.src)
-    def __init__(self, func, name, globs):
+    def __init__(self, func, name, tac):
         self.name = name
+        self.tac = tac
+        globs = tac.scopes[0]
         if name is None:
             decl = None
             sc = None
@@ -201,13 +203,7 @@ class Allocator(object):
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
         self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
-        self.gen = 0
-        self.counters = []
         self.code = []
-    def genlabel(self):
-        n = self.gen
-        self.gen += 1
-        return '_%s_%d'%(self.name, n)
     def register(self, name):
         for r in self.registers:
             if r.name == name: return r
@@ -661,7 +657,7 @@ class Allocator(object):
                 if t.op == '==':
                     self.code.append(self.RTLCp(a, r))
                     self.code.append(self.RTLMove(a, PAR.Literal(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
-                    label = self.genlabel()
+                    label = self.tac.genlabel()
                     self.code.append(self.RTLCJump(label, Flag('Z')))
                     self.code.append(self.RTLAdd(a, PAR.Literal(1)))
                     self.code.append(self.RTLLabel(label))
@@ -671,26 +667,30 @@ class Allocator(object):
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACLabel):
             self.clobber_registers()
-            self.code.append(self.RTLLabel('_%s_%s'%(self.name, t.name)))
+            self.code.append(self.RTLLabel(self.wraplabel(t.name)))
             return
         if isinstance(t, TAC.TACIf):
-            # t.(cond, count)
             if t.cond not in self.names:
                 raise AllocError("Name not found", t.cond)
             sc, typ = self.names[t.cond]
             size = self.sizeof(typ)
+            # spill all registers
+            self.clobber_registers()
             if size == 1: # cond has to be in A
                 a = self.load_byte_into_a(t.cond)
                 self.code.append(self.RTLAnd(a, a))
-                label = self.genlabel()
-                self.code.append(self.RTLCJump(label, Flag('Z')))
-                self.counters.append((t.count, label))
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
+                self.spill(a)
                 return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACGoto):
-            self.code.append(self.RTLJump(t.label))
+            # spill all registers
+            self.clobber_registers()
+            self.code.append(self.RTLJump(self.wraplabel(t.label)))
             return
         raise NotImplementedError(t)
+    def wraplabel(self, label):
+        return LEX.Identifier('_%s_%s'%(self.name, label))
     def exdehl(self, follow):
         de = self.register('DE')
         d, e = de.children
@@ -779,20 +779,12 @@ class Allocator(object):
                     raise TACError(t.sc)
     def allocate_registers(self):
         for t in self.func:
-            self.counters = [(c - 1, l) for (c, l) in self.counters if c]
             try:
                 self.tac_to_rtl(t)
             except:
                 self.err("in TAC: %s"%(pprint.pformat(t),))
                 self.err("with regs: %s"%(pprint.pformat(self.current_register_allocations),))
                 raise
-            counted = [l for (c, l) in self.counters if not c]
-            if counted:
-                self.clobber_registers()
-                for l in counted:
-                    self.code.append(self.RTLLabel(l))
-        if any(c for (c, l) in self.counters): # can't happen
-            raise AllocError("Leftover counters", self.counters)
         if not self.code or not isinstance(self.code[-1], (self.RTLReturn, self.RTLJump)):
             if not self.void_function:
                 raise AllocError("Control reached end of non-void function")
@@ -837,7 +829,7 @@ class Allocator(object):
 def alloc(parse_tree, tac):
     allocations = {}
     for name, func in tac.functions.items():
-        alloc = Allocator(func, name, tac.scopes[0])
+        alloc = Allocator(func, name, tac)
         alloc.allocate()
         allocations[name] = alloc
     return allocations

@@ -108,14 +108,14 @@ class FunctionGenerator(Generator):
             assert op.dst.size == 2, op
             if isinstance(op.src, REG):
                 if op.src.size == 1:
-                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src))
+                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src))
                 elif op.src.size == 2:
-                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src.lo))
-                    self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset + 1, op.src.hi))
+                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.lo))
+                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset + 1, op.src.hi))
                 else:
                     raise GenError(op.src.size)
             elif isinstance(op.src, PAR.Literal):
-                self.text.append("\tLD (%s+%d),%s"%(op.dst, op.offset, op.src.value))
+                self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.value))
             else:
                 raise GenError(op)
         elif isinstance(op, RTL.RTLMove):
@@ -166,8 +166,15 @@ class FunctionGenerator(Generator):
                     if op.src.size != 1: # should never happen
                         raise GenError("Cp A with %s (%d)"%(op.src, op.src.size))
                     self.text.append("\tCP %s"%(op.src,))
-            elif isinstance(op.src, PAR.LongLiteral):
-                raise GenError("16-bit literal compare", op)
+            else:
+                raise NotImplementedError(op)
+        elif isinstance(op, RTL.RTLAnd):
+            assert isinstance(op.dst, REG), op
+            if isinstance(op.src, REG):
+                if op.dst.name == 'A': # 8-bit add
+                    if op.src.size != 1: # should never happen
+                        raise GenError("And A with %s (%d)"%(op.src, op.src.size))
+                    self.text.append("\tAND %s"%(op.src,))
             else:
                 raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLPush):
@@ -177,13 +184,16 @@ class FunctionGenerator(Generator):
             assert isinstance(op.dst, REG), op
             self.text.append("\tPOP %s"%(op.dst,))
         elif isinstance(op, RTL.RTLLabel):
-            assert isinstance(op.name, str), op
+            assert isinstance(op.name, LEX.Identifier), op
             self.text.append("%s:"%(op.name,))
         elif isinstance(op, RTL.RTLCall):
             assert isinstance(op.addr, str), op
             self.text.append("\tCALL %s"%(op.addr,))
-        elif isinstance(op, RTL.RTLCJump):
-            assert isinstance(op.label, str), op
+        elif isinstance(op, RTL.RTLJump): # TODO notice when we need to use long JP (but how?)
+            assert isinstance(op.label, LEX.Identifier), op
+            self.text.append("\tJR %s"%(op.label))
+        elif isinstance(op, RTL.RTLCJump): # TODO notice when we need to use long JP (but how?)
+            assert isinstance(op.label, LEX.Identifier), op
             assert isinstance(op.flag, Flag)
             self.text.append("\tJR %s,%s"%(op.flag.name, op.label))
         else:

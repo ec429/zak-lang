@@ -475,6 +475,8 @@ class Parser(object):
         if isinstance(tokens[0], Lexer.Identifier) and isinstance(tokens[1], Lexer.Colon):
             label = tokens.pop(0)
             tokens.pop(0)
+            if label.raw[0] == '_': # if they ever use "_genlabel" bad things will happen...
+                self.warn("Labels beginning with _ are reserved for the implementation.")
             return self.Label(label)
         expr = self.parse_expression(tokens)
         if isinstance(tokens[0], Lexer.Semicolon):
@@ -615,6 +617,8 @@ class Parser(object):
                 tokens.pop(0)
                 continue
             self.expected("',' or ')'", tokens)
+    def warn(self, text):
+        print >>sys.stderr, text
 
 ## Entry point
 

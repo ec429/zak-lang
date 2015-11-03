@@ -144,14 +144,14 @@ class TACifier(object):
         def __repr__(self):
             return 'TACGoto(%s)'%(self.label,)
     class TACIf(TACStatement):
-        def __init__(self, cond, count):
+        def __init__(self, cond, label):
             self.cond = cond
-            self.count = count # number of following statements to only run if cond is true
+            self.label = label
         def rename(self, dst, src):
             if self.cond == dst:
                 self.cond = src
         def __repr__(self):
-            return 'TACIf(%r, %d)'%(self.cond,self.count)
+            return 'TACIf(%r, %r)'%(self.cond, self.label)
     class Value(object):
         def __init__(self, typ):
             self.typ = typ
@@ -182,6 +182,10 @@ class TACifier(object):
         n = self.gennum
         self.gennum += 1
         return self.Genbool(n)
+    def genlabel(self):
+        n = self.gennum
+        self.gennum += 1
+        return LEX.Identifier('_genlabel_%d'%(n))
     def __init__(self):
         self.scopes = [{}]
         self.functions = {None:[]}
@@ -373,7 +377,8 @@ class TACifier(object):
         elif isinstance(stmt, PAR.IfStatement):
             cond, stmts = self.walk_expr(stmt.cond)
             then = self.walk_stmt(stmt.then)
-            return stmts + [self.TACIf(cond.name, len(then))] + then
+            label = self.genlabel()
+            return stmts + [self.TACIf(cond.name, label)] + then + [self.TACLabel(label)]
         elif isinstance(stmt, PAR.GotoStatement):
             return [self.TACGoto(stmt.label)]
         else:
