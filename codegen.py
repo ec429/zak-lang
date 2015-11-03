@@ -201,6 +201,7 @@ class FunctionGenerator(Generator):
         else:
             raise NotImplementedError(op)
     def generate(self):
+        self.text.append("")
         if isinstance(self.rtl.sc, LEX.Auto):
             self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
         elif not isinstance(self.rtl.sc, LEX.Static):
@@ -317,14 +318,17 @@ if __name__ == "__main__":
         text.extend(gen.text)
     print "==ASSEMBLY OUTPUT BEGINS HERE=="
     if bss:
+        print
         print ".bss"
         for line in bss:
             print line
     if data:
+        print
         print ".data"
         for line in data:
             print line
     if text:
+        print
         print ".text"
         for line in text:
             print line

@@ -63,15 +63,19 @@ if __name__ == "__main__":
         for out in outs:
             out.write(line)
             out.write('\n')
+    pr("; Compiled zak code; do not edit directly")
     if bss:
+        pr("")
         pr(".bss")
         for line in bss:
             pr(line)
     if data:
+        pr("")
         pr(".data")
         for line in data:
             pr(line)
     if text:
+        pr("")
         pr(".text")
         for line in text:
             pr(line)
