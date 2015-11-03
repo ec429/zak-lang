@@ -18,6 +18,7 @@ class Register(object):
         self.name = name
         self.user = None
         self._lock = False
+        self.isdirty = False
     @property
     def available(self):
         return not self.user
@@ -25,9 +26,18 @@ class Register(object):
         if not self.available:
             raise AllocError("Attempted to claim %s, in use by %s"%(self, self.user))
         self.user = user
+        self.isdirty = False
+    def dirty(self):
+        if not self.user:
+            raise AllocError("Attempted to dirty %s, but is empty"%(self,))
+        self.isdirty = True
+    def clean(self):
+        self.isdirty = False
     def free(self):
         if self.locked:
             raise AllocError("Attempted to free %s, locked by %s"%(self, self.user))
+        if self.isdirty:
+            raise AllocError("Attempted to free %s, dirty with %s"%(self, self.user))
         self.user = None
     @property
     def locked(self):
@@ -231,7 +241,9 @@ class Allocator(object):
                 r.user = None # nothing to spill
                 return
             assert name in self.names
-            self.code.append(self.RTLSpill(r, name))
+            if r.isdirty:
+                self.code.append(self.RTLSpill(r, name))
+                r.clean()
             r.free()
         elif isinstance(r, SplittableRegister):
             for c in r.children:
@@ -326,15 +338,20 @@ class Allocator(object):
             if r.user == name:
                 return r
         return
+    def move(self, dst, src):
+        dst.claim(src.user)
+        self.code.append(self.RTLMove(dst, src))
+        if src.isdirty:
+            dst.dirty()
+            src.clean()
+        src.free()
     def free_a(self, name):
         a = self.register('A')
         if a.user != name:
             if not a.available:
                 move = self.choose_byte_register(False)
                 if move:
-                    move.claim(a.user)
-                    self.code.append(self.RTLMove(move, a))
-                    a.free()
+                    self.move(move, a)
                 else:
                     self.spill(a)
         return a
@@ -344,9 +361,7 @@ class Allocator(object):
             if not hl.available:
                 move = self.choose_word_register(False)
                 if move:
-                    move.claim(hl.user)
-                    self.code.append(self.RTLMove(move, hl))
-                    hl.free()
+                    self.move(move, hl)
                 else:
                     self.spill(hl)
         return hl
@@ -356,16 +371,12 @@ class Allocator(object):
             if not a.available:
                 move = self.choose_byte_register(False)
                 if move:
-                    move.claim(a.user)
-                    self.code.append(self.RTLMove(move, a))
-                    a.free()
+                    self.move(move, a)
                 else:
                     self.spill(a)
             r = self.reg_find_byte(name)
             if r:
-                a.claim(r.user)
-                self.code.append(self.RTLMove(a, r))
-                r.free()
+                self.move(a, r)
             else:
                 self.fill(a, name)
         return a
@@ -376,9 +387,7 @@ class Allocator(object):
                 self.spill(hl)
             r = self.reg_find_word(name)
             if r: # move it to HL
-                hl.claim(r.user)
-                self.code.append(self.RTLMove(hl, r))
-                r.free()
+                self.move(hl, r)
             else:
                 self.fill(hl, name)
         return hl
@@ -395,8 +404,10 @@ class Allocator(object):
                 if r is None: # just rename it
                     self.spill(s)
                     s.claim(t.dst)
+                    s.dirty()
                     return
                 self.code.append(self.RTLMove(r, s))
+                r.dirty()
                 return
             elif size == 2:
                 s = self.fetch_src_word(t.src)
@@ -404,8 +415,10 @@ class Allocator(object):
                 if r is None: # just rename it
                     self.spill(s)
                     s.claim(t.dst)
+                    s.dirty()
                     return
                 self.code.append(self.RTLMove(r, s))
+                r.dirty()
                 return
             else:
                 raise TACError("Tried to move an aggregate, size = %d"%(size,))
@@ -417,7 +430,9 @@ class Allocator(object):
                 r = self.reg_find_word(t.dst)
                 if r is None:
                     r = self.choose_word_register()
+                    r.claim(t.dst)
                 self.code.append(self.RTLMove(r, t.src))
+                r.dirty()
                 return
         if isinstance(t, TAC.TACAdd):
             if t.dst not in self.names:
@@ -429,6 +444,7 @@ class Allocator(object):
                 a.lock()
                 r = self.fetch_src_byte(t.src)
                 self.code.append(self.RTLAdd(a, r))
+                a.dirty()
                 a.unlock()
                 return
             elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
@@ -436,18 +452,21 @@ class Allocator(object):
                     if t.src.value in [1, -1]:
                         r = self.fetch_src_word(t.dst)
                         self.code.append(self.RTLAdd(r, t.src))
+                        r.dirty()
                         return
                     hl = self.load_word_into_hl(t.dst)
                     hl.lock()
                     r = self.choose_word_register()
                     self.fill(r, t.src)
                     self.code.append(self.RTLAdd(hl, r))
+                    hl.dirty()
                     hl.unlock()
                     return
                 hl = self.load_word_into_hl(t.dst)
                 hl.lock()
                 r = self.fetch_src_word(t.src)
                 self.code.append(self.RTLAdd(hl, r))
+                hl.dirty()
                 hl.unlock()
                 return
             else:
@@ -471,15 +490,13 @@ class Allocator(object):
                             self.spill(a)
                         r = self.reg_find_byte(t.src)
                         if r:
-                            a.claim(r.user)
-                            self.code.append(self.RTLMove(a, r))
-                            r.free()
+                            self.move(a, r)
                         else:
                             self.fill(a, t.src)
                 else:
                     raise NotImplementedError(size)
-            # Spill all variables before function return
-            # (if they're local or clean, we can optimise the spills away later)
+            # Spill all dirty variables before function return
+            # (if they're local, we can optimise the spills away later)
             for r in self.registers:
                 if not r.available:
                     self.spill(r)
@@ -531,6 +548,7 @@ class Allocator(object):
                 else:
                     raise NotImplementedError(r, p)
                 self.code.append(self.RTLDeref(r, p))
+                r.dirty()
                 return
             else:
                 r = self.reg_find_word(t.dst)
@@ -618,8 +636,7 @@ class Allocator(object):
                     raise NotImplementedError(size)
                 csp += size
             self.code.append(self.RTLIndirectWrite(ix, -1, PAR.Literal(csp)))
-            # Spill all variables before function call
-            # (if they're clean, we can optimise the spills away later)
+            # Spill all dirty variables before function call
             for r in self.registers:
                 if not r.available:
                     self.spill(r)
@@ -646,12 +663,10 @@ class Allocator(object):
                 r.lock()
                 if r.name == 'A': # have to shunt it out of the way
                     s = self.choose_byte_register()
-                    self.code.append(self.RTLMove(s, r))
-                    s.claim(r.user)
-                    s.lock()
                     r.unlock()
-                    r.free()
+                    self.move(s, r)
                     r = s
+                    r.lock()
                 a = self.load_byte_into_a(t.left)
                 r.unlock()
                 if t.op == '==':
@@ -662,6 +677,7 @@ class Allocator(object):
                     self.code.append(self.RTLAdd(a, PAR.Literal(1)))
                     self.code.append(self.RTLLabel(label))
                     a.user = t.dst
+                    a.dirty()
                     return
                 raise NotImplementedError(t.op)
             raise NotImplementedError(size)
