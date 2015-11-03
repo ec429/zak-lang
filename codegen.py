@@ -144,6 +144,10 @@ class FunctionGenerator(Generator):
                     if op.src.size != 1: # should never happen
                         raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
                     self.text.append("\tADD %s"%(op.src,))
+                elif op.dst.name in ['HL', 'IX', 'IY']: # 16-bit add
+                    if op.src.size != 2: # should never happen
+                        raise GenError("Add %s with %s (%d)"%(op.dst, op.src, op.src.size))
+                    self.text.append("\tADD %s,%s"%(op.dst, op.src))
                 else:
                     raise NotImplementedError(op)
             elif isinstance(op.src, PAR.Literal):
