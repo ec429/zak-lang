@@ -144,6 +144,8 @@ class FunctionGenerator(Generator):
                     if op.src.size != 1: # should never happen
                         raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
                     self.text.append("\tADD %s"%(op.src,))
+                else:
+                    raise NotImplementedError(op)
             elif isinstance(op.src, PAR.Literal):
                 assert op.dst.size == 1, op
                 if op.src.value == 1:
