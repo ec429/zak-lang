@@ -234,13 +234,15 @@ class Allocator(object):
         raise NotImplementedError("sizeof", typ)
     def is_on_stack(self, name):
         return name in self.stack
-    def spill(self, r):
+    def spill(self, r, ignorelocal=False):
         if r.user:
             name = r.user
             if isinstance(name, (PAR.Literal, PAR.LongLiteral)):
                 r.user = None # nothing to spill
                 return
             assert name in self.names
+            if ignorelocal and name in self.stack:
+                r.clean() # it's local and we're not going to need it again
             if r.isdirty:
                 self.code.append(self.RTLSpill(r, name))
                 r.clean()
@@ -248,9 +250,9 @@ class Allocator(object):
         elif isinstance(r, SplittableRegister):
             for c in r.children:
                 if c.user:
-                    self.spill(c)
+                    self.spill(c, ignorelocal)
         elif isinstance(r, SplitByteRegister):
-            self.spill(r.parent)
+            self.spill(r.parent, ignorelocal)
         else:
             raise AllocError("Spilling empty register", r)
     def fill(self, r, name):
@@ -495,11 +497,10 @@ class Allocator(object):
                             self.fill(a, t.src)
                 else:
                     raise NotImplementedError(size)
-            # Spill all dirty variables before function return
-            # (if they're local, we can optimise the spills away later)
+            # Spill all dirty (non-local) variables before function return
             for r in self.registers:
                 if not r.available:
-                    self.spill(r)
+                    self.spill(r, ignorelocal=True)
             self.code.append(self.RTLReturn())
             return
         if isinstance(t, TAC.TACDeref):
