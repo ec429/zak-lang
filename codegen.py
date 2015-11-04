@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import sys, pprint
+import sys, pprint, string
 import parser, tacifier, allocator
 LEX = parser.Lexer
 PAR = parser.Parser
@@ -205,11 +205,23 @@ class FunctionGenerator(Generator):
         else:
             raise NotImplementedError(op)
     def generate(self):
+        for name, (size, typ) in self.rtl.static.items():
+            if name in self.rtl.tac.strings:
+                self.data.append("%s: .asciz \"%s\""%(name, self.escape_string(self.rtl.tac.strings[name])))
+            else:
+                self.err(self.rtl.tac.strings)
+                raise NotImplementedError(name, size, typ)
         self.text.append("")
         if isinstance(self.rtl.sc, LEX.Auto):
             self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
         elif not isinstance(self.rtl.sc, LEX.Static):
             raise GenError("Unexplained storage class", self.rtl.sc)
+        self.text.append("; Stack:")
+        stack = dict((offset, name) for (name,(offset, typ, size)) in self.rtl.stack.items())
+        for offset, name in stack.items():
+            if isinstance(name, TAC.Gensym):
+                name = "[gensym]"
+            self.text.append("; %d: %s"%(offset, name))
         self.text.append("%s:"%(self.name,))
         self.extend_stack_frame()
         for op in self.rtl.code:
@@ -219,6 +231,16 @@ class FunctionGenerator(Generator):
                 self.err("In func: %s %s"%(self.name, self.rtl.decl))
                 self.err("In op: %r"%(op,))
                 raise
+    def escape_string(self, s):
+        out = []
+        for c in s:
+            if c == '"':
+                out.append('\\"')
+            elif c in string.printable:
+                out.append(c)
+            else:
+                out.append('\\%03o'%(ord(c),))
+        return ''.join(out)
     def err(self, text):
         print >>sys.stderr, text
 
