@@ -5,12 +5,15 @@ extern word baz;
 static byte answer_to_everything = 42;
 word taxicab = 1729l;
 
-byte (*f)(byte); // declares f as pointer to function (byte) returning byte
+/* We can't use the names "f" and "i" as those alias registers in the generated
+ * assembly, and the names of globals are kept for linking reasons.
+ */
+byte (*name_f)(byte); // declares _f as pointer to function (byte) returning byte
 byte *g(byte); // declares g as function (byte) returning pointer to byte
 
 byte (*h(byte))(word); // declares h as function (byte) returning pointer to function (word) returning byte
 
-byte (**(*i)(byte))(word); // declares i as pointer to function (byte) returning pointer to pointer to function (word) returning byte
+byte (**(*name_i)(byte))(word); // declares _i as pointer to function (byte) returning pointer to pointer to function (word) returning byte
 
 static bool question(byte answer)
 {

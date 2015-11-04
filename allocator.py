@@ -245,8 +245,8 @@ class Allocator(object):
                 r.clean() # it's local and we're not going to need it again
             if r.isdirty:
                 if name in self.stack:
-                    # mark it as used
-                    self.stack[name] = self.stack[name][:3]+(True,)
+                    sp, typ, size, filled, spilled = self.stack[name]
+                    self.stack[name] = sp, typ, size, filled, True
                 # do the spill
                 self.code.append(self.RTLSpill(r, name))
                 r.clean()
@@ -264,6 +264,9 @@ class Allocator(object):
         if r.user == name: # Nothing to do; we're already filled
             return
         assert r.available, (r, r.user, name)
+        if name in self.stack:
+            sp, typ, size, filled, spilled = self.stack[name]
+            self.stack[name] = sp, typ, size, True, spilled
         self.code.append(self.RTLFill(r, name))
         r.claim(name)
     def kill(self, name):
@@ -789,7 +792,7 @@ class Allocator(object):
         else:
             for nam,typ in self.decl.arglist.args:
                 size = self.sizeof(typ)
-                self.stack[nam] = (self.sp, typ, size, True)
+                self.stack[nam] = [self.sp, typ, size, True, True]
                 self.names[nam] = (LEX.Auto("auto"), typ)
                 self.sp += size
                 if self.sp > 127:
@@ -804,15 +807,15 @@ class Allocator(object):
                 self.names[name] = (t.sc, t.typ)
                 size = self.sizeof(t.typ)
                 if isinstance(t.sc, LEX.Auto):
-                    self.stack[name] = (None, t.typ, size, False)
+                    self.stack[name] = [None, t.typ, size, False, False]
                 elif isinstance(t.sc, LEX.Static):
                     self.static[name] = (size, t.typ)
                 else:
                     raise TACError(t.sc)
     def allocate_locals(self):
-        for name,(sp, typ, size, backed) in self.stack.items():
-            if backed and sp is None:
-                self.stack[name] = (self.sp, typ, size, backed)
+        for name,(sp, typ, size, filled, spilled) in self.stack.items():
+            if filled and spilled and sp is None:
+                self.stack[name] = [self.sp, typ, size, filled, spilled]
                 self.sp += size
                 if self.sp > 127:
                     raise AllocError("No room on stack for local", name, t.typ, size)
@@ -823,7 +826,7 @@ class Allocator(object):
                 self.names[name] = (t.sc, t.typ)
                 size = self.sizeof(t.typ)
                 if isinstance(t.sc, (LEX.Auto, LEX.Static)):
-                    self.stack[name] = (None, t.typ, size, True)
+                    self.stack[name] = [None, t.typ, size, True, True]
                 else:
                     raise TACError(t.sc)
     def allocate_registers(self):

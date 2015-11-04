@@ -42,8 +42,8 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLFill):
             assert isinstance(op.reg, REG), op
             if self.rtl.is_on_stack(op.name):
-                offset, typ, size, backed = self.rtl.stack[op.name]
-                if not backed: # technically this might be able to happen, but I don't see how
+                offset, typ, size, filled, spilled = self.rtl.stack[op.name]
+                if offset is None: # technically this might be able to happen, but I don't see how
                     raise GenError("Fill reg %s with non-backed %s"%(op.reg, op.name))
                 if size != op.reg.size:
                     raise GenError("Fill reg %s (%d) with %s (%d)"%(op.reg, op.reg.size, op.name, size))
@@ -71,18 +71,21 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLSpill):
             assert isinstance(op.reg, REG), op
             if self.rtl.is_on_stack(op.name):
-                offset, typ, size, backed = self.rtl.stack[op.name]
-                if not backed:
-                    raise GenError("Spill reg %s to non-backed %s"%(op.reg, op.name))
-                if size != op.reg.size:
-                    raise GenError("Spill reg %s (%d) to %s (%d)"%(op.reg, op.reg.size, op.name, size))
-                if size == 1:
-                    self.text.append("\tLD (IY+%d),%s"%(offset, op.reg))
-                elif size == 2:
-                    self.text.append("\tLD (IY+%d),%s"%(offset, op.reg.lo))
-                    self.text.append("\tLD (IY+%d),%s"%(offset+1, op.reg.hi))
-                else: # can't happen
-                    raise GenError(size)
+                offset, typ, size, filled, spilled = self.rtl.stack[op.name]
+                if offset is None:
+                    if filled: # can't happen
+                        raise GenError("Spill reg %s to non-backed %s"%(op.reg, op.name))
+                    # nothing to do, it's not backed
+                else:
+                    if size != op.reg.size:
+                        raise GenError("Spill reg %s (%d) to %s (%d)"%(op.reg, op.reg.size, op.name, size))
+                    if size == 1:
+                        self.text.append("\tLD (IY+%d),%s"%(offset, op.reg))
+                    elif size == 2:
+                        self.text.append("\tLD (IY+%d),%s"%(offset, op.reg.lo))
+                        self.text.append("\tLD (IY+%d),%s"%(offset+1, op.reg.hi))
+                    else: # can't happen
+                        raise GenError(size)
             else:
                 if op.reg.name == 'A':
                     raise NotImplementedError("Spill A to static %s"%(op.name,))
@@ -147,7 +150,7 @@ class FunctionGenerator(Generator):
                 if op.dst.name == 'A': # 8-bit add
                     if op.src.size != 1: # should never happen
                         raise GenError("Add A with %s (%d)"%(op.src, op.src.size))
-                    self.text.append("\tADD %s"%(op.src,))
+                    self.text.append("\tADD %s,%s"%(op.dst,op.src))
                 elif op.dst.name in ['HL', 'IX', 'IY']: # 16-bit add
                     if op.src.size != 2: # should never happen
                         raise GenError("Add %s with %s (%d)"%(op.dst, op.src, op.src.size))
@@ -211,7 +214,7 @@ class FunctionGenerator(Generator):
     def generate(self):
         for name, (size, typ) in self.rtl.static.items():
             if name in self.rtl.tac.strings:
-                self.data.append("%s: .asciz \"%s\""%(name, self.escape_string(self.rtl.tac.strings[name])))
+                self.data.append("%s: .asciz \"%s\""%(self.staticname(name), self.escape_string(self.rtl.tac.strings[name])))
             else:
                 self.err(self.rtl.tac.strings)
                 raise NotImplementedError(name, size, typ)
@@ -223,9 +226,9 @@ class FunctionGenerator(Generator):
         else:
             raise GenError("Unexplained storage class", self.rtl.sc)
         self.text.append("; Stack:")
-        stack = dict((offset, (name, backed)) for (name,(offset, typ, size, backed)) in self.rtl.stack.items())
-        for offset, (name, backed) in stack.items():
-            if backed:
+        stack = dict((offset, name) for (name,(offset, typ, size, filled, spilled)) in self.rtl.stack.items())
+        for offset, name in stack.items():
+            if offset is not None:
                 self.text.append("; %d: %s"%(offset, name))
         self.text.append("%s:"%(self.name,))
         self.extend_stack_frame()
@@ -253,8 +256,8 @@ class FunctionGenerator(Generator):
 
 class GlobalGenerator(Generator):
     def generate(self):
-        for name, (_, typ, size, backed) in self.rtl.stack.items():
-            if not backed: # can't happen
+        for name, (_, typ, size, filled, spilled) in self.rtl.stack.items():
+            if not filled and spilled: # can't happen
                 raise GenError("Global is not memory-backed", name)
             if name not in self.rtl.inits: # can't happen
                 raise GenError("Undeclared global", name)
