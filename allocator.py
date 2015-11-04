@@ -671,6 +671,7 @@ class Allocator(object):
                 r.unlock()
                 if t.op == '==':
                     self.code.append(self.RTLCp(a, r))
+                    self.spill(a) # in theory there should be nothing to do except mark it as free
                     self.code.append(self.RTLMove(a, PAR.Literal(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
                     label = self.tac.genlabel()
                     self.code.append(self.RTLCJump(label, Flag('Z')))
