@@ -42,7 +42,9 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLFill):
             assert isinstance(op.reg, REG), op
             if self.rtl.is_on_stack(op.name):
-                offset, typ, size = self.rtl.stack[op.name]
+                offset, typ, size, backed = self.rtl.stack[op.name]
+                if not backed: # technically this might be able to happen, but I don't see how
+                    raise GenError("Fill reg %s with non-backed %s"%(op.reg, op.name))
                 if size != op.reg.size:
                     raise GenError("Fill reg %s (%d) with %s (%d)"%(op.reg, op.reg.size, op.name, size))
                 if size == 1:
@@ -69,7 +71,9 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLSpill):
             assert isinstance(op.reg, REG), op
             if self.rtl.is_on_stack(op.name):
-                offset, typ, size = self.rtl.stack[op.name]
+                offset, typ, size, backed = self.rtl.stack[op.name]
+                if not backed:
+                    raise GenError("Spill reg %s to non-backed %s"%(op.reg, op.name))
                 if size != op.reg.size:
                     raise GenError("Spill reg %s (%d) to %s (%d)"%(op.reg, op.reg.size, op.name, size))
                 if size == 1:
@@ -214,14 +218,15 @@ class FunctionGenerator(Generator):
         self.text.append("")
         if isinstance(self.rtl.sc, LEX.Auto):
             self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
-        elif not isinstance(self.rtl.sc, LEX.Static):
+        elif isinstance(self.rtl.sc, LEX.Static):
+            self.text.append("; (static) %s"%(self.rtl.decl,))
+        else:
             raise GenError("Unexplained storage class", self.rtl.sc)
         self.text.append("; Stack:")
-        stack = dict((offset, name) for (name,(offset, typ, size)) in self.rtl.stack.items())
-        for offset, name in stack.items():
-            if isinstance(name, TAC.Gensym):
-                name = "[gensym]"
-            self.text.append("; %d: %s"%(offset, name))
+        stack = dict((offset, (name, backed)) for (name,(offset, typ, size, backed)) in self.rtl.stack.items())
+        for offset, (name, backed) in stack.items():
+            if backed:
+                self.text.append("; %d: %s"%(offset, name))
         self.text.append("%s:"%(self.name,))
         self.extend_stack_frame()
         for op in self.rtl.code:
@@ -248,7 +253,9 @@ class FunctionGenerator(Generator):
 
 class GlobalGenerator(Generator):
     def generate(self):
-        for name, (_, typ, size) in self.rtl.stack.items():
+        for name, (_, typ, size, backed) in self.rtl.stack.items():
+            if not backed: # can't happen
+                raise GenError("Global is not memory-backed", name)
             if name not in self.rtl.inits: # can't happen
                 raise GenError("Undeclared global", name)
             init = self.rtl.inits[name]

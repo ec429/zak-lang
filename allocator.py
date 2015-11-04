@@ -244,6 +244,10 @@ class Allocator(object):
             if ignorelocal and name in self.stack:
                 r.clean() # it's local and we're not going to need it again
             if r.isdirty:
+                if name in self.stack:
+                    # mark it as used
+                    self.stack[name] = self.stack[name][:3]+(True,)
+                # do the spill
                 self.code.append(self.RTLSpill(r, name))
                 r.clean()
             r.free()
@@ -262,6 +266,11 @@ class Allocator(object):
         assert r.available, (r, r.user, name)
         self.code.append(self.RTLFill(r, name))
         r.claim(name)
+    def kill(self, name):
+        for r in self.all_byte_registers + self.general_word_registers:
+            if r.user == name:
+                r.clean()
+                r.free()
     def choose_byte_register(self, spill=True):
         # prefer BCDEHL (prefer a reg whose partner is in use), then A, then spill from BCDEHL
         for r in self.general_byte_registers:
@@ -404,23 +413,31 @@ class Allocator(object):
                 s = self.fetch_src_byte(t.src)
                 r = self.reg_find_byte(t.dst)
                 if r is None: # just rename it
+                    if t.kills:
+                        self.kill(t.src)
                     self.spill(s)
                     s.claim(t.dst)
                     s.dirty()
                     return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
+                if t.kills:
+                    self.kill(t.src)
                 return
             elif size == 2:
                 s = self.fetch_src_word(t.src)
                 r = self.reg_find_word(t.dst)
                 if r is None: # just rename it
+                    if t.kills:
+                        self.kill(t.src)
                     self.spill(s)
                     s.claim(t.dst)
                     s.dirty()
                     return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
+                if t.kills:
+                    self.kill(t.src)
                 return
             else:
                 raise TACError("Tried to move an aggregate, size = %d"%(size,))
@@ -448,6 +465,8 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(a, r))
                 a.dirty()
                 a.unlock()
+                if t.kills:
+                    self.kill(t.src)
                 return
             elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
                 if isinstance(t.src, (PAR.Literal, PAR.LongLiteral)):
@@ -470,6 +489,8 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(hl, r))
                 hl.dirty()
                 hl.unlock()
+                if t.kills:
+                    self.kill(t.src)
                 return
             else:
                 raise TACError("Tried to add to an aggregate, size = %d"%(size,))
@@ -706,6 +727,10 @@ class Allocator(object):
             self.clobber_registers()
             self.code.append(self.RTLJump(self.wraplabel(t.label)))
             return
+        if isinstance(t, TAC.TACKill):
+            # any register containing it is no longer live
+            self.kill(t.name)
+            return
         raise NotImplementedError(t)
     def wraplabel(self, label):
         return LEX.Identifier('_%s_%s'%(self.name, label))
@@ -764,27 +789,33 @@ class Allocator(object):
         else:
             for nam,typ in self.decl.arglist.args:
                 size = self.sizeof(typ)
-                self.stack[nam] = (self.sp, typ, size)
+                self.stack[nam] = (self.sp, typ, size, True)
                 self.names[nam] = (LEX.Auto("auto"), typ)
                 self.sp += size
                 if self.sp > 127:
                     raise AllocError("No room on stack for param", nam, typ, size)
         self.caller_stack_size = self.sp
-    def allocate_locals(self):
+    def prepare_locals(self):
+        # compute their sizes, but don't reserve stack space yet
+        # after all, they might get optimised away
         for t in self.func:
             if isinstance(t, TAC.TACDeclare):
                 name = t.name
                 self.names[name] = (t.sc, t.typ)
                 size = self.sizeof(t.typ)
                 if isinstance(t.sc, LEX.Auto):
-                    self.stack[name] = (self.sp, t.typ, size)
-                    self.sp += size
-                    if self.sp > 127:
-                        raise AllocError("No room on stack for local", name, t.typ, size)
+                    self.stack[name] = (None, t.typ, size, False)
                 elif isinstance(t.sc, LEX.Static):
                     self.static[name] = (size, t.typ)
                 else:
                     raise TACError(t.sc)
+    def allocate_locals(self):
+        for name,(sp, typ, size, backed) in self.stack.items():
+            if backed and sp is None:
+                self.stack[name] = (self.sp, typ, size, backed)
+                self.sp += size
+                if self.sp > 127:
+                    raise AllocError("No room on stack for local", name, t.typ, size)
     def allocate_globals(self):
         for t in self.func:
             if isinstance(t, TAC.TACDeclare):
@@ -792,7 +823,7 @@ class Allocator(object):
                 self.names[name] = (t.sc, t.typ)
                 size = self.sizeof(t.typ)
                 if isinstance(t.sc, (LEX.Auto, LEX.Static)):
-                    self.stack[name] = (None, t.typ, size)
+                    self.stack[name] = (None, t.typ, size, True)
                 else:
                     raise TACError(t.sc)
     def allocate_registers(self):
@@ -834,8 +865,9 @@ class Allocator(object):
                 self.gather_initialisers()
             else:
                 self.allocate_params()
-                self.allocate_locals()
+                self.prepare_locals()
                 self.allocate_registers()
+                self.allocate_locals()
         except:
             self.err("In: %s %r"%(self.name, self.decl))
             raise
