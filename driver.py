@@ -5,7 +5,7 @@ import parser, tacifier, allocator, codegen
 
 def parse_args():
     x = optparse.OptionParser()
-    x.add_option('-o', '--output', type='string', default="a.out")
+    x.add_option('-o', '--output', type='string', default="out.s")
     x.add_option('-D', '--debug', action='store_true')
     x.add_option('-n', '--dry-run', action='store_true')
     opts, args = x.parse_args()
