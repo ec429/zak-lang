@@ -64,6 +64,13 @@ class SplitByteRegister(ByteRegister):
     @property
     def partner(self):
         return [c for c in self.parent.children if c != self][0]
+    # state-functions are used for EX DE,HL
+    @property
+    def state(self):
+        return (self.user, self.isdirty)
+    @state.setter
+    def state(self, value):
+        self.user, self.isdirty = value
     @property
     def available(self):
         return not (self.user or self.parent.user)
@@ -79,6 +86,17 @@ class SplittableRegister(WordRegister):
         if any(c.user for c in self.children):
             raise AllocError("Attempted to free %s, in use by child %s"%(self, c))
         super(WordRegister, self).free()
+    # state-functions are used for EX DE,HL
+    @property
+    def state(self):
+        if self.locked:
+            raise AllocError("Attempted to copy state of %s while locked"%(self,))
+        return (self.user, self.isdirty, {c:c.state for c in self.children})
+    @state.setter
+    def state(self, value):
+        self.user, self.isdirty, d = value
+        for c in self.children:
+            c.state = d[c]
     @property
     def available(self):
         return not (self.user or any(c.user for c in self.children))
@@ -738,6 +756,8 @@ class Allocator(object):
     def wraplabel(self, label):
         return LEX.Identifier('_%s_%s'%(self.name, label))
     def exdehl(self, follow):
+        if follow and follow.size == 1:
+            raise AllocError("exdehl following %s, size 1"%(follow,))
         de = self.register('DE')
         d, e = de.children
         hl = self.register('HL')
@@ -745,11 +765,11 @@ class Allocator(object):
         locked = [r for r in (de, hl, d, e, h, l) if r.locked]
         if locked:
             raise AllocError("exdehl blocked by lock(s)", locked)
-        deu = (de.user, d.user, e.user)
-        hlu = (hl.user, h.user, l.user)
+        deu = de.state
+        hlu = hl.state
         self.code.append(self.RTLExchange(de, hl))
-        (hl.user, h.user, l.user) = deu
-        (de.user, d.user, e.user) = hlu
+        hl.state = deu
+        de.state = hlu
         if follow == de:
             return hl
         if follow == hl:
