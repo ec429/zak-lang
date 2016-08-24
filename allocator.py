@@ -740,12 +740,12 @@ class Allocator(object):
             sc, typ = self.names[t.cond]
             size = self.sizeof(typ)
             # spill all registers
-            self.clobber_registers()
+            self.clobber_registers(leave=t.cond)
             if size == 1: # cond has to be in A
                 a = self.load_byte_into_a(t.cond)
                 self.code.append(self.RTLAnd(a, a))
+                self.clobber_registers()
                 self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
-                self.spill(a)
                 return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACGoto):
@@ -782,11 +782,11 @@ class Allocator(object):
         if follow is None:
             return
         raise AllocError("exdehl with follow", follow)
-    def clobber_registers(self):
+    def clobber_registers(self, leave=None):
         for r in self.registers:
             if r.locked:
                 raise AllocError("Clobbering locked register", r)
-            if not r.available:
+            if not r.available and r.user != leave:
                 self.spill(r)
         if self.flags:
             raise NotImplementedError("Spilling flags on clobber")
