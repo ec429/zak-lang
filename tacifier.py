@@ -217,7 +217,7 @@ class TACifier(object):
                     return (self.Identifier(typ, lval.name), [], [])
             raise TACError("Name", lval.name, "not in scope")
         if isinstance(lval, PAR.Dereference):
-            pointee, pre = self.get_rvalue(lval.erand)
+            pointee, pre = self.walk_expr(lval.erand)
             if not isinstance(pointee.typ, PAR.Pointer):
                 raise TACError("Dereferencing non-pointer", lval.erand)
             sym = self.gensym()
@@ -238,20 +238,6 @@ class TACifier(object):
                     sc, typ = scope[rval.name]
                     return (self.Identifier(typ, rval.name), [])
             raise TACError("Name", rval.name, "not in scope")
-        if isinstance(rval, PAR.Dereference):
-            pointee, ps = self.get_rvalue(rval.erand)
-            if not isinstance(pointee.typ, PAR.Pointer):
-                raise TACError("Dereferencing non-pointer", rval.erand)
-            sym = self.gensym()
-            typ = pointee.typ.pointee
-            self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
-            stmts = ps
-            stmts.append(self.TACDeclare(sym, LEX.Auto('auto'), typ))
-            stmts.append(self.TACDeref(sym, pointee.name))
-            if isinstance(pointee.name, self.Gensym): # no-one but us has a reference to it
-                stmts.append(self.TACKill(pointee.name))
-                del self.scopes[-1][pointee.name]
-            return (self.Identifier(typ, sym), stmts)
         if isinstance(rval, PAR.Literal):
             typ = PAR.ValueOfType('byte')
             return (self.Identifier(typ, rval), [])
@@ -299,18 +285,32 @@ class TACifier(object):
             return [self.TACReturn(rvalue.name, kills=killr)]
         raise TACError("Uninterpreted rvalue", rvalue)
     def walk_expr(self, expr): # this always returns an rvalue
-        if isinstance(expr, (PAR.IdentifierExpression, PAR.Literal, PAR.LongLiteral)):
+        if isinstance(expr, (PAR.IdentifierExpression, PAR.Literal, PAR.LongLiteral, PAR.StringLiteral)):
             return self.get_rvalue(expr)
         if isinstance(expr, PAR.AssignIsh):
             lval = expr.left
             rval = expr.right
             lvalue, pre, post = self.get_lvalue(lval)
-            rvalue, rs = self.get_rvalue(rval)
+            rvalue, rs = self.walk_expr(rval)
             killr = isinstance(rvalue.name, self.Gensym) # no-one but us has a reference to it
             return (lvalue, rs + pre + self.emit_assignish(expr.op, lvalue, rvalue, killr) + post) # lvalue becomes an rvalue, returns the value written
+        if isinstance(expr, PAR.Dereference):
+            pointee, ps = self.walk_expr(expr.erand)
+            if not isinstance(pointee.typ, PAR.Pointer):
+                raise TACError("Dereferencing non-pointer", expr.erand)
+            sym = self.gensym()
+            typ = pointee.typ.pointee
+            self.scopes[-1][sym] = (LEX.Auto('auto'), typ)
+            stmts = ps
+            stmts.append(self.TACDeclare(sym, LEX.Auto('auto'), typ))
+            stmts.append(self.TACDeref(sym, pointee.name))
+            if isinstance(pointee.name, self.Gensym): # no-one but us has a reference to it
+                stmts.append(self.TACKill(pointee.name))
+                del self.scopes[-1][pointee.name]
+            return (self.Identifier(typ, sym), stmts)
         if isinstance(expr, PAR.Comparison):
-            left, ls = self.get_rvalue(expr.left)
-            right, rs = self.get_rvalue(expr.right)
+            left, ls = self.walk_expr(expr.left)
+            right, rs = self.walk_expr(expr.right)
             sym = self.gensym() # either use in a conditional context, or assign (really Rename) to a variable
             typ = PAR.ValueOfType('bool')
             return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, LEX.Auto('auto'), typ),
@@ -351,7 +351,7 @@ class TACifier(object):
                 raise TACError("Can't postcrement type", typ)
             return (lvalue, pre + [self.TACAdd(lvalue.name, crement)] + post)
         if isinstance(expr, PAR.FunctionCall):
-            func, fs = self.get_rvalue(expr.func)
+            func, fs = self.walk_expr(expr.func)
             if not isinstance(func.typ, PAR.FunctionDecl):
                 raise TACError("Calling non-function", expr, "is", func)
             rtyp = func.typ.bound
@@ -360,7 +360,7 @@ class TACifier(object):
             stmts = []
             types = []
             for a in expr.args.args:
-                arg, st = self.get_rvalue(a)
+                arg, st = self.walk_expr(a)
                 args.append(arg)
                 stmts.extend(st)
                 types.append((None, arg.typ))
@@ -413,7 +413,7 @@ class TACifier(object):
             if init is None:
                 stmts.append(self.TACDeclare(name, sc, decl))
             else:
-                rvalue, rs = self.get_rvalue(init)
+                rvalue, rs = self.walk_expr(init)
                 if decl != rvalue.typ:
                     self.err("Want: %r"%(decl,))
                     self.err("Have: %r"%(rvalue.typ,))
