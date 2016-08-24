@@ -436,7 +436,8 @@ class Allocator(object):
                 if r is None: # just rename it
                     if t.kills:
                         self.kill(t.src)
-                    self.spill(s)
+                    else:
+                        self.spill(s)
                     s.claim(t.dst)
                     s.dirty()
                     return
@@ -573,7 +574,10 @@ class Allocator(object):
                     raise NotImplementedError(r, p)
                 elif p:
                     # LD A,(pp)
-                    raise NotImplementedError(r, p)
+                    if r: # we're about to invalidate the old value
+                        r.free()
+                    r = self.register('A')
+                    r.claim(t.dst) # no need to fill, as we're assigning to it
                 elif self.register('HL').available: # r must be None (else r.name in 'HL', contra)
                     # LD r,(HL)
                     p = self.register('HL')
@@ -617,7 +621,8 @@ class Allocator(object):
                         p.unlock()
                 elif (r == self.register('A')):
                     # LD (pp),A
-                    raise NotImplementedError(r, p)
+                    if not p:
+                        raise NotImplementedError(r, p)
                 elif r and r.name not in 'HL':
                     r.lock()
                     # LD (HL),r
