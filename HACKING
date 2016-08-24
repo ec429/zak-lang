@@ -19,22 +19,22 @@ TAC: Two-Address Code, the first intermediate form.  Converts expressions,
  exception of TACCall) have at most two arguments.  In order to do this, the
  TACifier creates gensyms to hold intermediate results; sometimes it will
  create a gensym unnecessarily (immediately copying it to another symbol and
- never using it again), which might be a good target for an optimisation pass.
+ never using it again), which might be a good target for an optimisation pass,
+ particularly as this might improve the next stage's optimisation abilities.
  [class TACifier in tacifier.py]
 RTL: Register Transfer Language, the second intermediate form.  Allocates
  storage for static and auto variables.  Performs register allocation on the
  stream of TACStatements for each function, generating a stream of
  RTLStatements including the operations necessary to fill and spill symbols to
  and from registers as needed.  At synchronisation points such as returns (or,
- when they're implemented, conditionals or jumps), will spill everything; this
- could be another optimisation target (elide spill writes of symbols that
- haven't been dirtied).  Moreover, at labels and (again, to an extent)
- conditionals, registers may be considered stale and the symbols they held
- will need refilling.  Another possible optimisation might be detecting
- local spills that are _never_ refilled, and (if the local variable never has
- its address taken) eliding the spill.  And, again, detecting local variables
- (whose address is not taken) which are never filled or spilled, and eliding
- their stack slot.
+ when they're implemented, conditionals or jumps), will spill everything (but
+ elide spill writes of symbols that haven't been dirtied).  Moreover, at labels
+ and (again, to an extent) conditionals, registers may be considered stale and
+ the symbols they held will need refilling.
+ Optimisations here include detecting local spills that are _never_ refilled,
+ and (if the local variable never has its address taken) eliding the spill.
+ And, again, detecting local variables (whose address is not taken) which are
+ never filled or spilled, and eliding their stack slot.
  [class Allocator in allocator.py]
 GEN: the code generator.  Converts RTLStatements into actual Z80 assembly
  language text, adding them to the bss, data or text section as appropriate.
