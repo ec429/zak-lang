@@ -1,0 +1,16 @@
+/* A variant of the strcpy function.
+ *
+ * This has been written in rather more 'idiomatic C' style, with a fairly
+ * complex expression containing three assignments and used as a conditional.
+ * This leads to a lot of gensyms and hence rather poor register allocation;
+ * it's quite a stress test for the compiler's optimisation behaviour.
+ */
+
+void strcpy(byte *dst, byte *src)
+{
+	// A really smart compiler might optimise this to use LDI
+	// But we don't expect to get that smart.  If you want that kind of performance, use asm
+next:
+	if (*dst++ = *src++)
+		goto next;
+}
