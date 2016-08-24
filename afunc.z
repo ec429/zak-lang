@@ -17,3 +17,11 @@ byte sump(byte *a, byte *b)
 	tmp += *b;
 	return tmp;
 }
+
+/* This version happens to produce better register allocation behaviour */
+byte sump2(byte *a, byte *b)
+{
+	byte pa = *a, pb = *b;
+
+	return pb += pa;
+}
