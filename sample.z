@@ -41,7 +41,7 @@ next:
 		goto next;
 }
 
-/*struct i_exist_somewhere;
+struct i_exist_somewhere;
 
 struct u32
 {
@@ -49,7 +49,13 @@ struct u32
 	word lo;
 };
 
-void add_u32(struct u32 *dst, struct u32 *src)
+struct two_u32 /* nested structs test */
+{
+	struct u32 x;
+	struct u32 y;
+};
+
+/*void add_u32(struct u32 *dst, struct u32 *src)
 {
 	dst->lo += src->lo;
 	if (#C) // test carry flag
