@@ -878,6 +878,10 @@ class Allocator(object):
                     self.stack[name] = [None, t.typ, size, True, True]
                 else:
                     raise TACError(t.sc)
+            elif isinstance(t, TAC.TACStructDef):
+                s = RTLStructDef(t.defn)
+                s.allocate(self)
+                self.structs[t.tag] = s
     def allocate_registers(self):
         for t in self.func:
             try:
@@ -909,9 +913,7 @@ class Allocator(object):
                     raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.name])
                 self.inits[t.name] = t.value
             elif isinstance(t, TAC.TACStructDef):
-                s = RTLStructDef(t.defn)
-                s.allocate(self)
-                self.structs[t.tag] = s
+                pass
             else:
                 raise NotImplementedError(t)
     def allocate(self):
