@@ -21,6 +21,14 @@ class TACifier(object):
                 raise TACError("Tried to rename", self, "to", src)
         def __repr__(self):
             return 'TACDeclare(%r, %r, %r)'%(self.name, self.sc, self.typ)
+    class TACStructDef(TACStatement):
+        def __init__(self, tag, defn):
+            self.tag = tag
+            self.defn = defn
+        def rename(self, dst, src):
+            raise TACError("Tried to rename(%r, %r, %r)"%(self, dst, src))
+        def __repr__(self):
+            return 'TACStructDef(%r, %r)'%(self.tag, self.defn)
     class TACInitGlobal(TACStatement):
         def __init__(self, name, value):
             self.name = name
@@ -202,6 +210,7 @@ class TACifier(object):
         self.in_func = None
         self.strings = {}
         self.gennum = 0
+        self.structs = {}
     def arg_list(self, arglist):
         scope = {}
         for name,typ in arglist.args:
@@ -469,6 +478,18 @@ class TACifier(object):
         raise NotImplementedError(expr)
     def add(self, name, sc, decl, init):
         code = self.functions[self.in_func]
+        if isinstance(sc, LEX.Struct):
+            if decl is None:
+                self.structs.setdefault(name, None)
+            elif self.structs.get(name) is None:
+                if self.in_func is not None: # should be impossible, parser won't allow it
+                    raise TACError("Scoped struct definition")
+                decls = [self.TACDeclare(memb, LEX.Auto("auto"), md) for (memb, sc, md, init) in decl]
+                self.structs[name] = self.TACStructDef(name, decls)
+                code.append(self.structs[name])
+            else:
+                raise TACError("struct %s redefined"%(name,))
+            return
         if isinstance(decl, PAR.FunctionDecl):
             if isinstance(init, PAR.BlockStatement):
                 if isinstance(sc, LEX.Extern):

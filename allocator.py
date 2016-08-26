@@ -109,6 +109,24 @@ class Flag(object):
     def __repr__(self):
         return '#'+self.name
 
+class RTLStructDef(object):
+    def __init__(self, decls):
+        self.decls = decls
+    def allocate(self, rtl):
+        assert isinstance(rtl, Allocator), rtl
+        self.members = []
+        self.offsets = {}
+        at = 0
+        for t in self.decls:
+            assert isinstance(t, TAC.TACDeclare), t
+            size = rtl.sizeof(t.typ)
+            self.members.append((at, t.name, size))
+            self.offsets[t.name] = at
+            at += size
+        self.size = at
+    def __repr__(self):
+        return 'RTLStructDef(%r)'%(self.decls,)
+
 class Allocator(object):
     class RTLStatement(object):
         def __repr__(self):
@@ -232,6 +250,7 @@ class Allocator(object):
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
         self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
         self.code = []
+        self.structs = {}
     def register(self, name):
         for r in self.registers:
             if r.name == name: return r
@@ -884,6 +903,10 @@ class Allocator(object):
                 if self.inits[t.name] is not None: # also can't happen
                     raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.name])
                 self.inits[t.name] = t.value
+            elif isinstance(t, TAC.TACStructDef):
+                s = RTLStructDef(t.defn)
+                s.allocate(self)
+                self.structs[t.tag] = s
             else:
                 raise NotImplementedError(t)
     def allocate(self):
