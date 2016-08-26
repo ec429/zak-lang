@@ -211,6 +211,7 @@ class Lexer(object):
 
 class ParseError(Exception): pass
 class NestedFunction(ParseError): pass
+class ScopedStruct(ParseError): pass
 class NotDeclaration(ParseError): pass
 
 def show_error_location(tokens):
@@ -270,6 +271,13 @@ class Parser(object):
             return 'FunctionDecl(%r, %r)'%(self.bound, self.arglist)
         def __eq__(self, other):
             return isinstance(other, Parser.FunctionDecl) and self.arglist == other.arglist
+    class StructDecl(Declarator):
+        def __init__(self, tag):
+            self.tag = tag
+        def __repr__(self):
+            return 'StructDecl(%r)'%(self.tag,)
+        def __eq__(self, other):
+            return isinstance(other, Parser.StructDecl) and self.tag == other.tag
     class ArgList(Declarator):
         def __init__(self, args):
             self.args = args
@@ -381,8 +389,9 @@ class Parser(object):
     def parse(self, tokens):
         self.parse_file_scope(tokens + ['$'])
     def parse_file_scope(self, tokens):
-        # [storage] type [declarator [= initialiser] [, declarator [= initialiser] [...]]]; // global variable declarations, including function declaration without definition
+        # [storage] type [declarator [= initialiser] [, declarator [= initialiser] [...]]]; // global variable declarations, including function (or struct) declaration without definition
         # [storage] type declarator { local-variables function-body } // function definition
+        # struct tag [{ <declarator-list> }] declarator; // for now we don't have compound initialisers
         while tokens[0] != '$':
             for declaration in self.parse_declaration(tokens, allowfunc=True):
                 self.globals.append(declaration)
@@ -390,9 +399,28 @@ class Parser(object):
         sclass = None
         if isinstance(tokens[0], Lexer.StorageClass):
             sclass = tokens.pop(0)
+        stag = None
         if isinstance(tokens[0], Lexer.Struct):
-            raise ParseError("struct not yet supported!")
-        if isinstance(tokens[0], Lexer.BuiltinType):
+            ssc = tokens.pop(0)
+            if isinstance(tokens[0], Lexer.Identifier):
+                stag = tokens.pop(0).raw
+                struc = None
+                if isinstance(tokens[0], Lexer.LBrace):
+                    if not allowfunc:
+                        raise ScopedStruct("Struct in function scope at:\n    %s"%(show_error_location(tokens),))
+                    tokens.pop(0)
+                    struc = []
+                    while not isinstance(tokens[0], Lexer.RBrace):
+                        for declaration in self.parse_declaration(tokens, allowfunc=False):
+                            struc.append(declaration)
+                    tokens.pop(0) # }
+                    yield (stag, ssc, struc, None)
+                else: # it was named, so it exists
+                    yield (stag, ssc, None, None)
+                typ = self.StructDecl(stag)
+            else:
+                self.expected("identifier (struct tag)", tokens)
+        elif isinstance(tokens[0], Lexer.BuiltinType):
             typ = tokens.pop(0).raw
         elif sclass is not None:
             self.expected("type", tokens)
