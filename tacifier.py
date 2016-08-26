@@ -417,6 +417,9 @@ class TACifier(object):
                 sc = LEX.Extern("extern")
             else:
                 sc = LEX.Auto("auto")
+        if isinstance(sc, LEX.Struct):
+            # Nothing to do, it's just naming it
+            return stmts
         self.scopes[-1][name] = (sc, decl)
         if isinstance(sc, LEX.Auto):
             if init is None:

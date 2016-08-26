@@ -55,6 +55,8 @@ struct two_u32 /* nested structs test */
 	struct u32 y;
 };
 
+struct u32 number_of_foos;
+
 /*void add_u32(struct u32 *dst, struct u32 *src)
 {
 	dst->lo += src->lo;
@@ -68,6 +70,7 @@ extern void puts(byte *);
 byte main(void)
 {
 	byte *hello = "Hello sailor";
+	struct u32 bar_count;
 	byte *offset;
 
 	offset = hello;

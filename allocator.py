@@ -936,8 +936,14 @@ class Allocator(object):
 
 def alloc(parse_tree, tac):
     allocations = {}
+    # Do file-scope first, to get struct definitions
+    fs = Allocator(tac.functions[None], None, tac)
+    fs.allocate()
+    allocations[None] = fs
     for name, func in tac.functions.items():
+        if name is None: continue
         alloc = Allocator(func, name, tac)
+        alloc.structs = fs.structs
         alloc.allocate()
         allocations[name] = alloc
     return allocations
