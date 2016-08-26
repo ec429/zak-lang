@@ -43,6 +43,11 @@ if __name__ == "__main__":
             print rtl.stack
             pprint.pprint(rtl.code)
             print
+        print "Structs:"
+        for tag, struc in allocations[None].structs.items():
+            print "  struct", tag
+            for off, typ, memb, size in struc.members:
+                print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
         print
     if opts.debug: print "-CODE/GEN-"
     gen = codegen.generate(allocations)

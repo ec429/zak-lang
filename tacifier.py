@@ -554,5 +554,7 @@ if __name__ == "__main__":
     pprint.pprint(tac.scopes)
     print "TAC functions:"
     pprint.pprint(tac.functions)
+    print "TAC structs:"
+    pprint.pprint(tac.structs)
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1

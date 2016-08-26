@@ -119,8 +119,9 @@ class RTLStructDef(object):
         at = 0
         for t in self.decls:
             assert isinstance(t, TAC.TACDeclare), t
+            if t.typ is None: continue
             size = rtl.sizeof(t.typ)
-            self.members.append((at, t.name, size))
+            self.members.append((at, t.typ, t.name, size))
             self.offsets[t.name] = at
             at += size
         self.size = at
@@ -262,6 +263,10 @@ class Allocator(object):
         if isinstance(typ, PAR.ValueOfType):
             if typ.typ in builtin_sizes:
                 return builtin_sizes[typ.typ]
+            if isinstance(typ.typ, PAR.StructDecl):
+                if typ.typ.tag in self.structs:
+                    return self.structs[typ.typ.tag].size
+                raise AllocError("Incomplete struct type", typ.typ.tag)
             raise AllocError("Unrecognised value type", typ)
         if isinstance(typ, PAR.Pointer):
             return 2
@@ -956,6 +961,11 @@ if __name__ == "__main__":
     allocations = {}
     for name, func in tac.functions.items():
         print "Allocating", name or "globals"
-        alloc = Allocator(func, name, tac.scopes[0])
+        alloc = Allocator(func, name, tac)
         alloc.allocate()
         allocations[name] = alloc
+    print "Structs:"
+    for tag, struc in allocations[None].structs.items():
+        print "  struct", tag
+        for off, typ, memb, size in struc.members:
+            print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
