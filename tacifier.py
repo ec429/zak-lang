@@ -437,7 +437,7 @@ class TACifier(object):
                     stmts.append(self.TACRename(name, rvalue.name))
                 else:
                     stmts.insert(0, self.TACDeclare(name, sc, decl))
-                    stmts.append(self.TACAssign(name, rvalue))
+                    stmts.append(self.TACAssign(name, rvalue.name))
         elif isinstance(sc, LEX.Extern):
             if init is not None:
                 raise TACError("extern variable", name, "has initialiser", init)
