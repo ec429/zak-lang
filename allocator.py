@@ -457,14 +457,18 @@ class Allocator(object):
             if size == 1:
                 s = self.fetch_src_byte(t.src)
                 r = self.reg_find_byte(t.dst)
-                if r is None: # just rename it
-                    if t.kills:
-                        self.kill(t.src)
-                    else:
-                        self.spill(s)
-                    s.claim(t.dst)
-                    s.dirty()
-                    return
+                if r is None:
+                    if isinstance(s, PAR.Literal):
+                        r = self.choose_byte_register()
+                        r.claim(t.dst)
+                    else: # just rename it
+                        if t.kills:
+                            self.kill(t.src)
+                        else:
+                            self.spill(s)
+                        s.claim(t.dst)
+                        s.dirty()
+                        return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
                 if t.kills:
@@ -473,13 +477,17 @@ class Allocator(object):
             elif size == 2:
                 s = self.fetch_src_word(t.src)
                 r = self.reg_find_word(t.dst)
-                if r is None: # just rename it
-                    if t.kills:
-                        self.kill(t.src)
-                    self.spill(s)
-                    s.claim(t.dst)
-                    s.dirty()
-                    return
+                if r is None:
+                    if isinstance(s, PAR.Literal):
+                        r = self.choose_word_register()
+                        r.claim(t.dst)
+                    else: # just rename it
+                        if t.kills:
+                            self.kill(t.src)
+                        self.spill(s)
+                        s.claim(t.dst)
+                        s.dirty()
+                        return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
                 if t.kills:
