@@ -1,7 +1,6 @@
 Next tasks that need doing
 ==========================
 
-* Formally define zak language grammar.
 * Replace the ad-hoc parsing with something more formal, probably using
   funcparserlib.  Will also require teaching TACifier to consume the result.
 * Implement struct member operations (. and ->)

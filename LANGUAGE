@@ -1,0 +1,142 @@
+zak Language Definition
+=======================
+
+(Work in progress, subject to change)
+
+Grammar
+-------
+
+The source (after pre-processing by e.g. cpp) shall consist of a series of
+ declarations with optional initialisers.  (We consider a function definition
+ to be effectively a declaration (of function type) with an initialiser in the
+ form of a block statement.)
+ Whitespace is discarded after tokenisation.
+/* This is intended to be structurally like C, just with different type names
+ * and a few features (like typedefs, VLAs, and qualified/static array
+ * parameters to functions) removed.  It may need editing to achieve that.
+ * One addition is register annotations, which are only permitted in function
+ * prototypes (including definitions) and specify the calling conventions.
+ */
+<source>	::= <declare> <source>?
+<declare>	::= <storage-class>? <qualifier> <type> <declaration>
+<qualifier>	::= 'const' | 'volatile'
+<declaration>	::= <object-decls> ';' | <function-defn>
+<object-decls>	::= <object-decl> (',' <object-decls>)?
+<storage-class>	::= 'auto' | 'static' | 'extern'
+<type>		::= 'void' | 'bool' | 'byte' | 'word' | 'struct' <stag> | 'enum' <etag>
+<object-decl>	::= <register> <decl-spec> <initialiser>
+<decl-spec>	::= <pointer>? <direct-decl>
+<pointer>	::= '*' <qualifier-list>? <pointer>?
+<direct-decl>	::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
+<array-decl>	::= <direct-decl> '[' <assign?expr> ']' # XXX
+<func-decl>	::= <direct-decl> '(' <param-types> ')'
+<param-types>	::= <param-decl> (',' <param-types>)?
+<param-decl>	::= <type> <regparm>? (<decl-spec> | <abstract-decl>)
+<regparm>	::= '@' <register>
+<register>	::= <reg8> | <reg16>
+<reg8>		::= 'A' | 'B' | 'C' | 'D' | 'E' | 'H' | 'L' | 'IXH' | 'IXL' |
+		    'IYH' | 'IYL'
+<reg16>		::= 'BC' | 'DE' | 'HL' | 'IX' | 'IY'
+<abstract-decl>	::= <pointer> | (<pointer>? <dir-abs-decl>)
+<dir-abs-decl>	::= '(' <abstract-decl> ')' | <abs-arr-decl> | <abs-func-decl>
+<abs-arr-decl>	::= <dir-abs-decl>? '[' <assign?expr> ']' # XXX
+<abs-func-decl>	::= <dir-abs-decl>? '(' <param-types> ')'
+<type-name>	::= <type> <abstract-decl>
+
+<identifier>	::~ [A-Za-z_][A-Za-z0-9_]*
+
+/* Expressions are where we start to differ noticeably from C.  Notably, we
+ * give shift and bitwise operators higher precedence than arithmetic, avoiding
+ * an infamous "infelicity" caused by early C's lack of logical operators.  The
+ * reason for the high precedence of shift operators is that, conceptually, both
+ * shift and bitwise operators are performed 'on the representation of' a value,
+ * which should be done before interpreting that representation as a value (e.g.
+ * a scalar) and performing operations, such as addition, on that value.
+ */
+<primary-expr>	::= <identifier> | <constant> | <string-literal> |
+		    <flag-ident> | '(' <expression> ')'
+<constant>	::= <int-const> | <enum-const> | <char-const>
+<int-const>	::= <dec-const> | <hex-const> | <oct-const>
+<dec-const>	::~ [1-9][0-9]*
+<hex-const>	::~ 0[xX][0-9a-fA-F]+
+<oct-const>	::~ 0[0-7]*
+<enum-const>	::= '$' <identifier>
+<char-const>	::= "'" (<c-char> | <esc-seq>) "'"
+
+<flag-ident>	::= '#' <flag-name>
+<flag-name>	::= 'S' | 'Z' | 'H' | 'P' | 'N' | 'C'
+
+<postfix-expr>	::= <primary-expr> | <subscript-expr> | <funcall-expr> |
+		    <member-expr> | <postcrem-expr> | <compound-lit>
+<subscript-expr>::= <postfix-expr> '[' <expression> ']'
+<funcall-expr>	::= <postfix-expr> '(' <arg-expr-list>? ')'
+<member-expr>	::= <memdot-expr> | <memptr-expr>
+<memdot-expr>	::= <postfix-expr> '.' <identifier>
+<memptr-expr>	::= <postfix-expr> '->' <identifier>
+<postcrem-expr>	::= <postfix-expr> ('++' | '--')
+<compound-lit>	::= '(' <type-name> ')' '{' <initialiser-list> ','? '}'
+
+<unary-expr>	::= <postfix-expr> | <precrem-expr> | <unary-op> <cast-expr> |
+		    <sizeof-expr>
+<precrem-expr>	::= ('++' | '--') <unary-expr>
+<unary-op>	::= '&' | '*' | '~' | '!'
+<cast-expr>	::= <unary-expr> | '(' <type-name> ')' <cast-expr>
+/* We disallow 'sizeof' without brackets */
+<sizeof-expr>	::= 'sizeof' '(' (<type-name> | <unary-expr>) ')'
+<shift-expr>	::= <cast-expr> |
+		    <shift-expr> ('<<' | '>>') <cast-expr>
+<bitwise-expr>	::= <shift-expr> |
+		    <bitwise-expr> '&' <shift-expr> |
+		    <bitwise-expr> '^' <shift-expr> |
+		    <bitwise-expr> '|' <shift-expr>
+<additive-expr>	::= <bitwise-expr> |
+		    <additive-expr> '+' <bitwise-expr> |
+		    <additive-expr> '-' <bitwise-expr>
+/* We disallow chains of relations, like a < b < c, because (a < b) has type
+ * bool, which is not an arithmetic type in zak; if you want the C meaning of
+ * this (a < b ? 1 : 0) < c, either use that ternary conditional, or (more
+ * idiomatically) a cast, as ((byte)(a < b)) < c.  Both have the advantage of
+ * being explicit about using a boolean value in an arithmetic context.
+ */
+<relation-expr> ::= <additive-expr> |
+		    <additive-expr> ('<' | '>' | '<=' | '>=') <additive-expr>
+<equality-expr>	::= <relation-expr> |
+		    <equality-expr> ('==' | '!=') <relation-expr>
+<and-expr>	::= <equality-expr> |
+		    <and-expr> '&&' <equality-expr>
+<or-expr>	::= <and-expr> |
+		    <or-expr> '||' <and-expr>
+<ternary-expr>	::= <or-expr> |
+		    <or-expr> '?' <expr> ':' <ternary-expr>
+<assign-expr>	::= <ternary-expr> |
+		    <unary-expr> <assign-op> <assign-expr>
+<assign-op>	::= '=' | '+=' | '-=' | '&=' | '|=' | '^=' | '<<=' | '>>='
+<expression>	::= <assign-expr> |
+		    <expression> ',' <assign-expr>
+
+
+Operator Precedence (informative)
+---------------------------------
+The precedence of operators, as implied by the grammar, is as follows:
+* Postfix operators (subscript, function call, member, postcrement)
+* Prefix operators (precrement, unary operators, casts, sizeof)
+* Shift operators (>>, <<)
+* Bitwise operators (&, |, ^)
+* Arithmetic (additive) operators (+, -)
+* Relational operators (<, >, <=, >=)
+* Equality operators (==, !=)
+* &&
+* ||
+* Ternary operator (?:)
+* Assignment operators (=, +=, -=, &=, |=, ^=, <<=, >>=)
+
+Restrictions on Names
+---------------------
+An identifier with external linkage shall not match (case-insensitively) any of
+ the following:
+A, B, C, D, E, F, H, L, I, R, IXH, IXL, IYH, IYL, AF, BC, DE, HL, IX, IY
+Rationale: these alias to register names in the generated assembly, and the
+ assembler gets unhappy.  A future version of the language might use a mangling
+ technique to allow their use.
+All identifiers with a leading _ (underscore) are reserved for the
+ implementation.
