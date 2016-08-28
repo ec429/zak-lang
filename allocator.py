@@ -91,12 +91,12 @@ class SplittableRegister(WordRegister):
     def state(self):
         if self.locked:
             raise AllocError("Attempted to copy state of %s while locked"%(self,))
-        return (self.user, self.isdirty, {c:c.state for c in self.children})
+        return (self.user, self.isdirty, [c.state for c in self.children])
     @state.setter
     def state(self, value):
         self.user, self.isdirty, d = value
-        for c in self.children:
-            c.state = d[c]
+        for c,v in zip(self.children, d):
+            c.state = v
     @property
     def available(self):
         return not (self.user or any(c.user for c in self.children))
