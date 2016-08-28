@@ -381,8 +381,8 @@ class TACifier(object):
                 return (None, fs + stmts + [self.TACCall(func, None, args)])
             sym = self.gensym()
             self.scopes[-1][sym] = (LEX.Auto('auto'), rtyp)
-            return (self.Identifier(typ, sym), [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs + stmts +
-                                               [self.TACCall(func, sym, args)])
+            return (self.Identifier(rtyp, sym), [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs + stmts +
+                                                [self.TACCall(func, sym, args)])
         raise NotImplementedError(expr)
     def walk_stmt(self, stmt):
         if isinstance(stmt, PAR.ExpressionStatement):
