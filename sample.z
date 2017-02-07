@@ -1,5 +1,6 @@
 word; // like, yeah, man!
 
+byte me;
 byte foo, *bar;
 extern word baz;
 static byte answer_to_everything = 42;
