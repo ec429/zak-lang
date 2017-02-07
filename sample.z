@@ -73,6 +73,7 @@ byte main(void)
 	struct u32 bar_count;
 	byte *offset;
 
+	//bar_count.hi = 0;
 	offset = hello;
 	offset += 6;
 	strcpy(offset, "world!");
