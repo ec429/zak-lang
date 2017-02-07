@@ -15,7 +15,8 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * and a few features (like typedefs, VLAs, and qualified/static array
  * parameters to functions) removed.  It may need editing to achieve that.
  * One addition is register annotations, which are only permitted in function
- * prototypes (including definitions) and specify the calling conventions.
+ * prototypes (including definitions) and function-pointer types; they specify
+ * the calling conventions.
  */
 <source>	::= <declare> <source>?
 <declare>	::= <storage-class>? <qualifier> <type> <declaration>
@@ -24,24 +25,43 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <object-decls>	::= <object-decl> (',' <object-decls>)?
 <storage-class>	::= 'auto' | 'static' | 'extern'
 <type>		::= 'void' | 'bool' | 'byte' | 'word' | 'struct' <stag> | 'enum' <etag>
+<stag>, <etag>	::= <identifier>
 <object-decl>	::= <register> <decl-spec> <initialiser>
 <decl-spec>	::= <pointer>? <direct-decl>
 <pointer>	::= '*' <qualifier-list>? <pointer>?
 <direct-decl>	::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
-<array-decl>	::= <direct-decl> '[' <assign?expr> ']' # XXX
-<func-decl>	::= <direct-decl> '(' <param-types> ')'
+<array-decl>	::= <direct-decl> '[' <expression> ']'
+<func-decl>	::= <regparm>? <direct-decl> '(' <param-types> ')'
 <param-types>	::= <param-decl> (',' <param-types>)?
 <param-decl>	::= <type> <regparm>? (<decl-spec> | <abstract-decl>)
 <regparm>	::= '@' <register>
-<register>	::= <reg8> | <reg16>
-<reg8>		::= 'A' | 'B' | 'C' | 'D' | 'E' | 'H' | 'L' | 'IXH' | 'IXL' |
-		    'IYH' | 'IYL'
+<register>	::= <reg8> | <reg16> | <regf>
+<reg8>		::= 'A' | 'B' | 'C' | 'D' | 'E' | 'H' | 'L' | 'IXH' | 'IXL' | 'IYH' | 'IYL'
 <reg16>		::= 'BC' | 'DE' | 'HL' | 'IX' | 'IY'
-<abstract-decl>	::= <pointer> | (<pointer>? <dir-abs-decl>)
+<regf>		::= '!'? <flag-ident>
+<abstract-decl>	::= <pointer> | <pointer>? <dir-abs-decl>
 <dir-abs-decl>	::= '(' <abstract-decl> ')' | <abs-arr-decl> | <abs-func-decl>
-<abs-arr-decl>	::= <dir-abs-decl>? '[' <assign?expr> ']' # XXX
+<abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
 <abs-func-decl>	::= <dir-abs-decl>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
+
+<function-defn>	::= <regparm>? <identifier> '(' <param-types> ')' <block-stmt>
+<block-stmt>	::= '{' <declare-list>? <stmt-list>? '}'
+<declare-list>	::= <declare> <declare-list>?
+<stmt-list>	::= <statement> <stmt-list>?
+<statement>	::= <expr-stmt> | <if-stmt> | <goto-stmt> | <label-stmt> |
+		    <return-stmt> | <block-stmt>
+<expr-stmt>	::= <expression> ';'
+<if-stmt>	::= 'if' '(' <expression> ')' <statement> <else-clause>?
+<else-clause>	::= 'else' <statement>
+<goto-stmt>	::= 'goto' <label> ';'
+<label>		::= <identifier>
+<label-stmt>	::= <label> ':'
+/* If our function is defined as returning a bool @<regf>, omitting the
+ * <expression> is equivalent to "return (bool)<regf>'", which is legal iff the
+ * use of that <flag-ident> would be.
+ */
+<return-stmt>	::= 'return' <expression>? ';'
 
 <identifier>	::~ [A-Za-z_][A-Za-z0-9_]*
 
@@ -52,6 +72,9 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * shift and bitwise operators are performed 'on the representation of' a value,
  * which should be done before interpreting that representation as a value (e.g.
  * a scalar) and performing operations, such as addition, on that value.
+ * Also, note that we have no multiplication or division operators, because
+ * those are quite expensive on a Z80; forcing them to be done with function
+ * calls makes them _feel_ expensive and less likely to be used unnecessarily.
  */
 <primary-expr>	::= <identifier> | <constant> | <string-literal> |
 		    <flag-ident> | '(' <expression> ')'
@@ -63,6 +86,9 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <enum-const>	::= '$' <identifier>
 <char-const>	::= "'" (<c-char> | <esc-seq>) "'"
 
+/* Rules for when flags may be used and which operations (other than functions
+ * returning a bool @<regf>) set them: TBD
+ */
 <flag-ident>	::= '#' <flag-name>
 <flag-name>	::= 'S' | 'Z' | 'H' | 'P' | 'N' | 'C'
 
@@ -129,6 +155,7 @@ The precedence of operators, as implied by the grammar, is as follows:
 * ||
 * Ternary operator (?:)
 * Assignment operators (=, +=, -=, &=, |=, ^=, <<=, >>=)
+* Comma operator (,)
 
 Restrictions on Names
 ---------------------
