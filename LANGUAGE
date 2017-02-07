@@ -19,7 +19,8 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * the calling conventions.
  */
 <source>	::= <declare> <source>?
-<declare>	::= <storage-class>? <qualifier> <type> <declaration>
+<declare>	::= <storage-class>? <qualifier-list>? <type> <declaration>
+<qualifier-list>::= <qualifier> <qualifier-list>?
 <qualifier>	::= 'const' | 'volatile'
 <declaration>	::= <object-decls> ';' | <function-defn>
 <object-decls>	::= <object-decl> (',' <object-decls>)?
@@ -44,6 +45,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
 <abs-func-decl>	::= <dir-abs-decl>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
+<initialiser>	::= '=' <expression>
 
 <function-defn>	::= <regparm>? <identifier> '(' <param-types> ')' <block-stmt>
 <block-stmt>	::= '{' <declare-list>? <stmt-list>? '}'
@@ -79,11 +81,13 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <primary-expr>	::= <identifier> | <constant> | <string-literal> |
 		    <flag-ident> | '(' <expression> ')'
 <constant>	::= <int-const> | <enum-const> | <char-const>
-<int-const>	::= <dec-const> | <hex-const> | <oct-const>
+<long-suffix>	::= 'l' | 'L'
+<int-const>	::= (<dec-const> | <hex-const> | <oct-const>) <long-suffix>?
 <dec-const>	::~ [1-9][0-9]*
 <hex-const>	::~ 0[xX][0-9a-fA-F]+
 <oct-const>	::~ 0[0-7]*
 <enum-const>	::= '$' <identifier>
+/* We do not allow multi-character <char-const>s */
 <char-const>	::= "'" (<c-char> | <esc-seq>) "'"
 
 /* Rules for when flags may be used and which operations (other than functions
@@ -133,13 +137,12 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <or-expr>	::= <and-expr> |
 		    <or-expr> '||' <and-expr>
 <ternary-expr>	::= <or-expr> |
-		    <or-expr> '?' <expr> ':' <ternary-expr>
+		    <or-expr> '?' <expression> ':' <ternary-expr>
 <assign-expr>	::= <ternary-expr> |
 		    <unary-expr> <assign-op> <assign-expr>
 <assign-op>	::= '=' | '+=' | '-=' | '&=' | '|=' | '^=' | '<<=' | '>>='
 <expression>	::= <assign-expr> |
 		    <expression> ',' <assign-expr>
-
 
 Operator Precedence (informative)
 ---------------------------------
