@@ -10,7 +10,6 @@ from pyparsing import *
 <declaration>   ::= <object-decls> ';' | <function-defn>
 <array-decl>    ::= <direct-decl> '[' <expression> ']'
 <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
-<type-name>     ::= <type> <abstract-decl>
 """
 
 # expressions grammar TODO
@@ -126,7 +125,7 @@ class Parser(object):
     declare = Group(OGroup(storage_class, 'storage_class') +\
                     OGroup(qualifier_list, 'qualifier_list') +\
                     ty_pe("type") + declaration("declaration"))
-    type_name = NoMatch() # TODO
+    type_name = ty_pe + abstract_decl("abstract_decl")
     dec_const = Word('123456789', nums)
     hex_const = (Word('0', 'xX', exact=2) + Word(hexnums))
     oct_const = Word('0', '01234567')
@@ -173,7 +172,7 @@ class Parser(object):
     do_cast = Suppress(Literal('(')) + type_name("type") +\
               Suppress(Literal(')')) + cast_expr("arg")
     cast_expr <<= Alternate3(unary_expr, do_cast, "do_cast")
-    sizeof_arg = type_name("name") | unary_expr("unary_expr")
+    sizeof_arg = type_name("type") | unary_expr("unary_expr")
     sizeof_expr = Suppress(Keyword('sizeof')) + Suppress(Literal('(')) +\
                   sizeof_arg("arg") + Suppress(Literal(')'))
     unary_expr <<= Alternate2(postfix_expr,
