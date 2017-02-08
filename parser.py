@@ -7,7 +7,6 @@ from pyparsing import *
 
 # declarations grammar TODO
 """
-<declaration>   ::= <object-decls> ';' | <function-defn>
 <array-decl>    ::= <direct-decl> '[' <expression> ']'
 <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
 """
@@ -15,23 +14,6 @@ from pyparsing import *
 # expressions grammar TODO
 """
 <compound-lit>  ::= '(' <type-name> ')' '{' <initialiser-list> ','? '}'
-"""
-
-# statements grammar TODO
-"""
-<function-defn> ::= <regparm>? <identifier> '(' <param-types> ')' <block-stmt>
-<block-stmt>    ::= '{' <declare-list>? <stmt-list>? '}'
-<declare-list>  ::= <declare> <declare-list>?
-<stmt-list>     ::= <statement> <stmt-list>?
-<statement>     ::= <expr-stmt> | <if-stmt> | <goto-stmt> | <label-stmt> |
-                    <return-stmt> | <block-stmt>
-<expr-stmt>     ::= <expression> ';'
-<if-stmt>       ::= 'if' '(' <expression> ')' <statement> <else-clause>?
-<else-clause>   ::= 'else' <statement>
-<goto-stmt>     ::= 'goto' <label> ';'
-<label>         ::= <identifier>
-<label-stmt>    ::= <label> ':'
-<return-stmt>   ::= 'return' <expression>? ';'
 """
 
 def OGroup(token, name):
@@ -123,41 +105,29 @@ class Parser(object):
     object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
                         OGroup(initialiser, 'initialiser'))("object_decl")
     object_decls = delimitedList(object_decl) | Empty()
-
-    # statements grammar TODO
-    """
-    <function-defn> ::= <regparm>? <identifier> '(' <param-types> ')' <block-stmt>
-    <block-stmt>    ::= '{' <declare-list>? <stmt-list>? '}'
-    <declare-list>  ::= <declare> <declare-list>?
-    <stmt-list>     ::= <statement> <stmt-list>?
-    <statement>     ::= <expr-stmt> | <if-stmt> | <goto-stmt> | <label-stmt> |
-                        <return-stmt> | <block-stmt>
-    <expr-stmt>     ::= <expression> ';'
-    <if-stmt>       ::= 'if' '(' <expression> ')' <statement> <else-clause>?
-    <else-clause>   ::= 'else' <statement>
-    <goto-stmt>     ::= 'goto' <label> ';'
-    <label>         ::= <identifier>
-    <label-stmt>    ::= <label> ':'
-    <return-stmt>   ::= 'return' <expression>? ';'
-    """
     expression = Forward().setName("expression")
     declare = Forward()
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
     expr_stmt = expression + Suppress(Literal(';'))
-    if_stmt = NoMatch() # TODO
-    goto_stmt = NoMatch() # TODO
-    label_stmt = NoMatch() # TODO
+    statement = Forward()
+    else_clause = Suppress(Keyword('else')) + statement
+    if_stmt = Suppress(Keyword('if')) + Suppress(Literal('(')) +\
+              Group(expression)("condition") + Suppress(Literal(')')) +\
+              Group(statement)("true") + OGroup(else_clause, "false")
+    goto_stmt = Suppress(Keyword('goto')) + Group(identifier)("label") +\
+                Suppress(Literal(';'))
+    label_stmt = Group(identifier)("label") + Suppress(Literal(':'))
     return_stmt = Suppress(Keyword('return')) + OGroup(expression, "value") +\
                   Suppress(Literal(';'))
-    statement = Alternate({'expr_stmt': expr_stmt,
-                           'if_stmt': if_stmt,
-                           'goto_stmt': goto_stmt,
-                           'label_stmt': label_stmt,
-                           'return_stmt': return_stmt,
-                           'block_stmt': block_stmt,
-                           })
-    stmt_list = OneOrMore(statement)
+    statement <<= Alternate({'expr_stmt': expr_stmt,
+                             'if_stmt': if_stmt,
+                             'goto_stmt': goto_stmt,
+                             'label_stmt': label_stmt,
+                             'return_stmt': return_stmt,
+                             'block_stmt': block_stmt,
+                             })
+    stmt_list = OneOrMore(Group(statement))
     block_stmt <<= Suppress(Literal('{')) +\
                    OGroup(declare_list, "declare_list") +\
                    OGroup(stmt_list, "stmt_list") +\
@@ -208,10 +178,10 @@ class Parser(object):
                               'funcall_tail': funcall_tail,
                               'member_tail': member_tail,
                               'postcrem_tail': postcrem_tail,
-                              'compound_lit': compound_lit,
                               })
-    postfix_expr = primary_expr |\
-                   (Group(primary_expr) + OneOrMore(postfix_tail)("postfix_tail"))
+    postfix_expr = (Group(primary_expr) + OneOrMore(Group(postfix_tail))("postfix_tail")) |\
+                   Group(compound_lit)("compound_lit") |\
+                   primary_expr
     unary_expr = Forward().setName("unary_expr")
     unary_op = Literal('&') | Literal('*') | Literal('~') | Literal('!')
     precrem_expr = (Literal('++') | Literal('--'))("op") + Group(unary_expr)("arg")
