@@ -1,14 +1,14 @@
-byte ans = 42;
+/*byte ans = 42;
 
 word s = 4l;
 
-byte proto(byte);
+byte proto(byte);*/
 
-byte sum(byte a, byte b)
+/*byte sum(byte a, byte b)
 {
 	a += b;
 	return a;
-}
+}*/
 
 byte sump(byte *a, byte *b)
 {
@@ -24,4 +24,12 @@ byte sump2(byte *a, byte *b)
 	byte pa = *a, pb = *b;
 
 	return pb += pa;
+}
+
+byte sumpp(byte **a, byte **b)
+{
+	byte tmp = **a;
+
+	tmp += **b;
+	return tmp;
 }
