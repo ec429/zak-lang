@@ -138,7 +138,7 @@ class Parser(object):
     initialiser = Suppress(Literal('=')) + assign_expr
     object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
                         OGroup(initialiser, 'initialiser'))("object_decl")
-    object_decls <<= delimitedList(object_decl) | Empty()
+    object_decls <<= delimitedList(Group(object_decl)) | Empty()
     declare = Forward()
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
@@ -177,10 +177,13 @@ class Parser(object):
                       Group(ty_pe)("type") + Group(declaration)("declaration"))
     type_name = ty_pe("type") + abstract_decl("abstract_decl")
     dec_const = Word('123456789', nums)
-    hex_const = (Word('0', 'xX', exact=2) + Word(hexnums))
+    hex_const = Suppress(Word('0', 'xX', exact=2)) + Word(hexnums)
     oct_const = Word('0', '01234567')
-    long_suffix = Word('lL', exact=1)
-    int_const = (dec_const | hex_const | oct_const) + Optional(long_suffix)
+    long_suffix = Suppress(Word('lL', exact=1))
+    int_const = Alternate({'dec': dec_const,
+                           'hex': hex_const,
+                           'oct': oct_const,
+                           }) + OGroup(long_suffix, "long")
     c_char = Word(printables + ' ', exact=1, excludeChars="'\\")
     octal_escape = Literal('\\') + Word('01234567', max=3)
     hex_escape = Literal('\\x') + Word(hexnums, max=2)
