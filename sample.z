@@ -6,6 +6,7 @@ extern word baz;
 static byte answer_to_everything = 42;
 word taxicab = 1729l;
 
+extern byte do_a_thing(byte);
 /* We can't use the names "f" and "i" as those alias registers in the generated
  * assembly, and the names of globals are kept for linking reasons.
  */
