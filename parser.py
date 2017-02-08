@@ -9,18 +9,7 @@ from pyparsing import *
 """
 <declaration>   ::= <object-decls> ';' | <function-defn>
 <array-decl>    ::= <direct-decl> '[' <expression> ']'
-<func-decl>     ::= <regparm>? <direct-decl> '(' <param-types> ')'
-<param-types>   ::= <param-decl> (',' <param-types>)?
-<param-decl>    ::= <type> <regparm>? (<decl-spec> | <abstract-decl>)
-<regparm>       ::= '@' <register>
-<register>      ::= <reg8> | <reg16> | <regf>
-<reg8>          ::= 'A' | 'B' | 'C' | 'D' | 'E' | 'H' | 'L' | 'IXH' | 'IXL' | 'IYH' | 'IYL'
-<reg16>         ::= 'BC' | 'DE' | 'HL' | 'IX' | 'IY'
-<regf>          ::= '!'? <flag-ident>
-<abstract-decl> ::= <pointer> | <pointer>? <dir-abs-decl>
-<dir-abs-decl>  ::= '(' <abstract-decl> ')' | <abs-arr-decl> | <abs-func-decl>
 <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
-<abs-func-decl> ::= <dir-abs-decl>? '(' <param-types> ')'
 <type-name>     ::= <type> <abstract-decl>
 """
 
@@ -47,37 +36,86 @@ from pyparsing import *
 """
 
 def OGroup(token, name):
-    return Optional(Group(token).setResultsName(name))
+    return Optional(Group(token).setResultsName(name).setName(name))
 def Alternate(l):
     if isinstance(l, dict):
         l = l.iteritems()
-    return MatchFirst(Group(t).setResultsName(n) for (n,t) in l)
+    return MatchFirst(Group(t).setResultsName(n).setName(n) for (n,t) in l)
 def Alternate2(p, l):
     return p | Alternate(l)
+def Alternate2R(p, l):
+    return Alternate(l) | p
 def Alternate3(p, q, n):
-    return p | Group(q).setResultsName(n)
+    return p | Group(q).setResultsName(n).setName(n)
+def Litor(*args):
+    return MatchFirst(Literal(s) for s in args)
+def Keyor(*args):
+    return MatchFirst(Keyword(s) for s in args)
 
 class Parser(object):
     identifier = Word(alphas + '_', alphanums + '_')
-    qualifier = Keyword('const') | Keyword('volatile')
-    storage_class = Keyword('auto') | Keyword('static') | Keyword('extern')
-    ty_pe = Keyword('void') | Keyword('bool') | Keyword('byte') | \
-            Keyword('word') | (Keyword('struct') + identifier("stag")) |\
-            (Keyword('enum') + identifier("etag"))
+    qualifier = Keyor('const', 'volatile')
+    storage_class = Keyor('auto', 'static', 'extern')
+    ty_pe = MatchFirst([Keyword('void'), Keyword('bool'), Keyword('byte'),
+                        Keyword('word'), Keyword('struct') + identifier("stag"),
+                        Keyword('enum') + identifier("etag")])
     qualifier_list = OneOrMore(qualifier)
     pointer = Forward()
     pointer <<= Group(Literal('*') + OGroup(qualifier_list, "qualifier_list") +
                       OGroup(pointer, "pointer"))
-    register = NoMatch() # TODO
+    flag_name = Literal('S') | Literal('Z') | Literal('H') |\
+                Literal('P') | Literal('N') | Literal('C')
+    flag_ident = (Suppress(Literal('#')) + flag_name)
+    reg8 = Litor('A', 'B', 'C', 'D', 'E', 'H', 'L', 'IXH', 'IXL', 'IYH', 'IYL')
+    reg16 = Litor('BC', 'DE', 'HL', 'IX', 'IY')
+    regf = Optional(Literal('!'))("not") + flag_ident
+    register = Alternate({'reg8': reg8, 'reg16': reg16, 'regf': regf})
+    regparm = Suppress(Literal('@')) + register
     decl_spec = Forward()
     array_decl = NoMatch() # TODO
-    func_decl = NoMatch() # TODO
-    direct_decl = Alternate({'identifier': identifier,
-                             'paren_decl': Suppress(Literal('(')) + decl_spec +
-                                           Suppress(Literal(')')),
-                             'array_decl': array_decl,
-                             'func_decl': func_decl,
-                             })
+    abstract_decl = Forward()
+    dir_abs_decl = Forward()
+    abs_arr_decl = NoMatch() # TODO
+    param_types = Forward()
+    dir_abs_decl_no_func = Alternate2(Suppress(Literal('(')) + abstract_decl +
+                                      Suppress(Literal(')')),
+                                      {'abs_arr_decl': abs_arr_decl,
+                                       })
+    abs_func_decl = OGroup(dir_abs_decl_no_func, 'callee') +\
+                    OneOrMore(Suppress(Literal('(')) + param_types +
+                              Suppress(Literal(')')))
+    dir_abs_decl <<= Alternate2R(Suppress(Literal('(')) + abstract_decl +
+                                 Suppress(Literal(')')),
+                                 {'abs_arr_decl': abs_arr_decl,
+                                  'abs_func_decl': abs_func_decl,
+                                  })
+    abstract_decl <<= pointer("pointer") |\
+                      (OGroup(pointer, "pointer") + dir_abs_decl("dir_abs_decl"))
+    param_decl = ty_pe("type") + OGroup(regparm, "regparm") +\
+                 Optional(Alternate({'decl_spec': decl_spec,
+                                     'abstract_decl': abstract_decl,
+                                     }))
+    param_types <<= delimitedList(Group(param_decl))
+    direct_decl = Forward()
+    direct_decl_no_func = Alternate2(Suppress(Literal('(')) + decl_spec +
+                                     Suppress(Literal(')')),
+                                     [('array_decl', array_decl),
+                                      ('identifier', identifier),
+                                      ])
+    rfunc_decl = Group(regparm)("regparm") +\
+                 Group(direct_decl)("callee") +\
+                 Suppress(Literal('(')) + param_types("params") +\
+                 Suppress(Literal(')'))
+    func_decl = OGroup(regparm, "regparm") +\
+                Group(direct_decl_no_func)("callee") +\
+                OneOrMore(Suppress(Literal('(')) + param_types("params") +
+                          Suppress(Literal(')')))
+    direct_decl <<= Alternate2R(Suppress(Literal('(')) + decl_spec +
+                                Suppress(Literal(')')),
+                                [('array_decl', array_decl),
+                                 ('func_decl', func_decl | rfunc_decl),
+                                 ('identifier', identifier),
+                                 ])
     decl_spec <<= Group(OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl"))
     expression = Forward()
     initialiser = Suppress(Literal('=')) + expression
@@ -105,9 +143,6 @@ class Parser(object):
                           'char_const': char_const,
                           })
     string_literal = QuotedString('"', escChar='\\')
-    flag_name = Literal('S') | Literal('Z') | Literal('H') |\
-                Literal('P') | Literal('N') | Literal('C')
-    flag_ident = (Suppress(Literal('#')) + flag_name)
     primary_expr = Alternate({'identifier': identifier,
                               'constant': constant,
                               'string_literal': string_literal,
@@ -186,7 +221,7 @@ class Parser(object):
     source.ignore(cppStyleComment)
     @classmethod
     def parse(cls, text):
-        return cls.source.parseString(text)
+        return cls.source.parseString(text)#, parseAll=True)
 
 ## Entry point
 
