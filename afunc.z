@@ -1,8 +1,8 @@
-/*byte ans = 42;
+byte ans = 42;
 
 word s = 4l;
 
-byte proto(byte);*/
+byte proto(byte);
 
 /*byte sum(byte a, byte b)
 {
