@@ -117,11 +117,11 @@ class Parser(object):
                                  ('func_decl', func_decl | rfunc_decl),
                                  ('identifier', identifier),
                                  ])
-    decl_spec <<= Group(OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl"))
+    decl_spec <<= OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl")
     assign_expr = Forward().setName("assign_expr")
     initialiser = Suppress(Literal('=')) + assign_expr
-    object_decl = Group(OGroup(register, 'register') + decl_spec("decl_spec") +\
-                        OGroup(initialiser, 'initialiser'))
+    object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
+                        OGroup(initialiser, 'initialiser'))("object_decl")
     object_decls = delimitedList(object_decl) | Empty()
 
     # statements grammar TODO
