@@ -7,6 +7,18 @@ from pyparsing import *
 
 # declarations grammar TODO
 """
+<type>		::= 'void' | 'bool' | 'byte' | 'word' | <struct> | <enum>
+<struct>	::= 'struct' <stag> <struct-body>?
+<stag>		::= <identifier>
+<struct-body>	::= '{' <struct-decls> '}'
+<struct-decls>	::= <struct-decl> <struct-decls>?
+<struct-decl>	::= <qualifier-list>? <type> <object-decls> ';'
+<enum>		::= 'enum' <etag> <enum-body>?
+<etag>		::= <identifier>
+<enum-body>	::= '{' <enum-defns> ','? '}'
+<enum-defns>	::= <enum-defn> (',' <enum-defns>)?
+<enum-defn>	::= <enum-const> '=' <expression>
+
 <array-decl>    ::= <direct-decl> '[' <expression> ']'
 <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
 """
@@ -37,10 +49,32 @@ class Parser(object):
     identifier = Word(alphas + '_', alphanums + '_').setName("identifier")
     qualifier = Keyor('const', 'volatile')
     storage_class = Keyor('auto', 'static', 'extern')
-    ty_pe = MatchFirst([Keyword('void'), Keyword('bool'), Keyword('byte'),
-                        Keyword('word'), Keyword('struct') + identifier("stag"),
-                        Keyword('enum') + identifier("etag")])
     qualifier_list = OneOrMore(qualifier)
+    ty_pe = Forward().setName("type")
+    object_decls = Forward()
+    struct_decl = OGroup(qualifier_list, "qualifier_list") +\
+                  Group(ty_pe)("type") + Group(object_decls)("object_decls") +\
+                  Suppress(Literal(';'))
+    struct_body = Suppress(Literal('{')) +\
+                  OneOrMore(Group(struct_decl)) +\
+                  Suppress(Literal('}'))
+    struct = Suppress(Keyword('struct')) + identifier("stag") +\
+             OGroup(struct_body, "body")
+    enum_const = (Literal('$') + identifier)
+    expression = Forward().setName("expression")
+    enum_defn = Group(enum_const)("name") + Suppress(Literal('=')) +\
+                Group(expression)("value")
+    enum_body = Suppress(Literal('{')) + delimitedList(enum_defn) +\
+                Suppress(Optional(Literal(','))) + Suppress(Literal('}'))
+    enum = Suppress(Keyword('enum')) + identifier("etag") +\
+           OGroup(enum_body, "body")
+    ty_pe <<= Alternate({'void': Suppress(Keyword('void')),
+                         'bool': Suppress(Keyword('bool')),
+                         'byte': Suppress(Keyword('byte')),
+                         'word': Suppress(Keyword('word')),
+                         'struct': struct,
+                         'enum': enum,
+                         })
     pointer = Forward()
     pointer <<= Suppress(Literal('*')) +\
                 OGroup(qualifier_list, "qualifier_list") +\
@@ -74,7 +108,7 @@ class Parser(object):
     abstract_decl <<= (OGroup(pointer, "pointer") +
                        dir_abs_decl("dir_abs_decl")) |\
                       Group(pointer)("pointer")
-    param_decl = ty_pe("type") + OGroup(regparm, "regparm") +\
+    param_decl = Group(ty_pe)("type") + OGroup(regparm, "regparm") +\
                  Optional(Alternate([('decl_spec', decl_spec),
                                      ('abstract_decl', abstract_decl),
                                      ]))
@@ -104,8 +138,7 @@ class Parser(object):
     initialiser = Suppress(Literal('=')) + assign_expr
     object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
                         OGroup(initialiser, 'initialiser'))("object_decl")
-    object_decls = delimitedList(object_decl) | Empty()
-    expression = Forward().setName("expression")
+    object_decls <<= delimitedList(object_decl) | Empty()
     declare = Forward()
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
@@ -141,14 +174,13 @@ class Parser(object):
                              })
     declare <<= Group(OGroup(storage_class, 'storage_class') +\
                       OGroup(qualifier_list, 'qualifier_list') +\
-                      ty_pe("type") + Group(declaration)("declaration"))
+                      Group(ty_pe)("type") + Group(declaration)("declaration"))
     type_name = ty_pe("type") + abstract_decl("abstract_decl")
     dec_const = Word('123456789', nums)
     hex_const = (Word('0', 'xX', exact=2) + Word(hexnums))
     oct_const = Word('0', '01234567')
     long_suffix = Word('lL', exact=1)
     int_const = (dec_const | hex_const | oct_const) + Optional(long_suffix)
-    enum_const = (Literal('$') + identifier)
     c_char = Word(printables + ' ', exact=1, excludeChars="'\\")
     octal_escape = Literal('\\') + Word('01234567', max=3)
     hex_escape = Literal('\\x') + Word(hexnums, max=2)

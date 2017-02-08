@@ -25,8 +25,17 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <declaration>	::= <object-decls> ';' | <function-defn>
 <object-decls>	::= <object-decl> (',' <object-decls>)?
 <storage-class>	::= 'auto' | 'static' | 'extern'
-<type>		::= 'void' | 'bool' | 'byte' | 'word' | 'struct' <stag> | 'enum' <etag>
-<stag>, <etag>	::= <identifier>
+<type>		::= 'void' | 'bool' | 'byte' | 'word' | <struct> | <enum>
+<struct>	::= 'struct' <stag> <struct-body>?
+<stag>		::= <identifier>
+<struct-body>	::= '{' <struct-decls> '}'
+<struct-decls>	::= <struct-decl> <struct-decls>?
+<struct-decl>	::= <qualifier-list>? <type> <object-decls> ';'
+<enum>		::= 'enum' <etag> <enum-body>?
+<etag>		::= <identifier>
+<enum-body>	::= '{' <enum-defns> ','? '}'
+<enum-defns>	::= <enum-defn> (',' <enum-defns>)?
+<enum-defn>	::= <enum-const> '=' <expression>
 <object-decl>	::= <register> <decl-spec> <initialiser>
 <decl-spec>	::= <pointer>? <direct-decl>
 <pointer>	::= '*' <qualifier-list>? <pointer>?
