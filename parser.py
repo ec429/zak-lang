@@ -60,8 +60,9 @@ class Parser(object):
                         Keyword('enum') + identifier("etag")])
     qualifier_list = OneOrMore(qualifier)
     pointer = Forward()
-    pointer <<= Group(Literal('*') + OGroup(qualifier_list, "qualifier_list") +
-                      OGroup(pointer, "pointer"))
+    pointer <<= Suppress(Literal('*')) +\
+                OGroup(qualifier_list, "qualifier_list") +\
+                OGroup(pointer, "pointer")
     flag_name = Literal('S') | Literal('Z') | Literal('H') |\
                 Literal('P') | Literal('N') | Literal('C')
     flag_ident = (Suppress(Literal('#')) + flag_name)
@@ -70,12 +71,12 @@ class Parser(object):
     regf = Optional(Literal('!'))("not") + flag_ident
     register = Alternate({'reg8': reg8, 'reg16': reg16, 'regf': regf})
     regparm = Suppress(Literal('@')) + register
-    decl_spec = Forward()
+    decl_spec = Forward().setName("decl_spec")
     array_decl = NoMatch() # TODO
-    abstract_decl = Forward()
-    dir_abs_decl = Forward()
+    abstract_decl = Forward().setName("abstract_decl")
+    dir_abs_decl = Forward().setName("dir_abs_decl")
     abs_arr_decl = NoMatch() # TODO
-    param_types = Forward()
+    param_types = Forward().setName("param_types")
     dir_abs_decl_no_func = Alternate2(Suppress(Literal('(')) + abstract_decl +
                                       Suppress(Literal(')')),
                                       {'abs_arr_decl': abs_arr_decl,
@@ -88,12 +89,13 @@ class Parser(object):
                                  {'abs_arr_decl': abs_arr_decl,
                                   'abs_func_decl': abs_func_decl,
                                   })
-    abstract_decl <<= pointer("pointer") |\
-                      (OGroup(pointer, "pointer") + dir_abs_decl("dir_abs_decl"))
+    abstract_decl <<= (OGroup(pointer, "pointer") +
+                       dir_abs_decl("dir_abs_decl")) |\
+                      Group(pointer)("pointer")
     param_decl = ty_pe("type") + OGroup(regparm, "regparm") +\
-                 Optional(Alternate({'decl_spec': decl_spec,
-                                     'abstract_decl': abstract_decl,
-                                     }))
+                 Optional(Alternate([('decl_spec', decl_spec),
+                                     ('abstract_decl', abstract_decl),
+                                     ]))
     param_types <<= delimitedList(Group(param_decl))
     direct_decl = Forward()
     direct_decl_no_func = Alternate2(Suppress(Literal('(')) + decl_spec +
@@ -116,8 +118,8 @@ class Parser(object):
                                  ('identifier', identifier),
                                  ])
     decl_spec <<= Group(OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl"))
-    expression = Forward()
-    initialiser = Suppress(Literal('=')) + expression
+    assign_expr = Forward().setName("assign_expr")
+    initialiser = Suppress(Literal('=')) + assign_expr
     object_decl = Group(OGroup(register, 'register') + decl_spec("decl_spec") +\
                         OGroup(initialiser, 'initialiser'))
     object_decls = delimitedList(object_decl) | Empty()
@@ -138,6 +140,7 @@ class Parser(object):
     <label-stmt>    ::= <label> ':'
     <return-stmt>   ::= 'return' <expression>? ';'
     """
+    expression = Forward().setName("expression")
     declare = Forward()
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
@@ -145,7 +148,7 @@ class Parser(object):
     if_stmt = NoMatch() # TODO
     goto_stmt = NoMatch() # TODO
     label_stmt = NoMatch() # TODO
-    return_stmt = Keyword('return') + OGroup(expression, 'value') +\
+    return_stmt = Suppress(Keyword('return')) + OGroup(expression, "value") +\
                   Suppress(Literal(';'))
     statement = Alternate({'expr_stmt': expr_stmt,
                            'if_stmt': if_stmt,
@@ -169,7 +172,7 @@ class Parser(object):
     declare <<= Group(OGroup(storage_class, 'storage_class') +\
                       OGroup(qualifier_list, 'qualifier_list') +\
                       ty_pe("type") + Group(declaration)("declaration"))
-    type_name = ty_pe + abstract_decl("abstract_decl")
+    type_name = ty_pe("type") + abstract_decl("abstract_decl")
     dec_const = Word('123456789', nums)
     hex_const = (Word('0', 'xX', exact=2) + Word(hexnums))
     oct_const = Word('0', '01234567')
@@ -207,56 +210,65 @@ class Parser(object):
                               'postcrem_tail': postcrem_tail,
                               'compound_lit': compound_lit,
                               })
-    postfix_expr = Group(primary_expr) + ZeroOrMore(postfix_tail)("postfix_tail")
+    postfix_expr = primary_expr |\
+                   (Group(primary_expr) + OneOrMore(postfix_tail)("postfix_tail"))
     unary_expr = Forward().setName("unary_expr")
     unary_op = Literal('&') | Literal('*') | Literal('~') | Literal('!')
-    precrem_expr = (Literal('++') | Literal('--'))("op") + unary_expr("arg")
+    precrem_expr = (Literal('++') | Literal('--'))("op") + Group(unary_expr)("arg")
     cast_expr = Forward().setName("cast_expr")
-    do_cast = Suppress(Literal('(')) + type_name("type") +\
-              Suppress(Literal(')')) + cast_expr("arg")
+    do_cast = Suppress(Literal('(')) + Group(type_name)("type") +\
+              Suppress(Literal(')')) + Group(cast_expr)("arg")
     cast_expr <<= Alternate3(unary_expr, do_cast, "do_cast")
-    sizeof_arg = type_name("type") | unary_expr("unary_expr")
+    sizeof_arg = type_name("type") | unary_expr("expr")
     sizeof_expr = Suppress(Keyword('sizeof')) + Suppress(Literal('(')) +\
-                  sizeof_arg("arg") + Suppress(Literal(')'))
+                  Group(sizeof_arg)("arg") + Suppress(Literal(')'))
     unary_expr <<= Alternate2(postfix_expr,
                               {'precrem_expr': precrem_expr,
-                               'unary_cast': unary_op + cast_expr,
+                               'unary_expr': Group(unary_op)("op") +
+                                             Group(cast_expr)("arg"),
                                'sizeof_expr': sizeof_expr,
                                })
     shift_expr = Forward().setName("shift_expr")
     shift_op = Literal('<<') | Literal('>>')
-    do_shift = cast_expr("left") + shift_op("op") + shift_expr("right")
+    do_shift = Group(cast_expr)("left") + shift_op("op") +\
+               Group(shift_expr)("right")
     shift_expr <<= Alternate3(cast_expr, do_shift, "do_shift")
     bitwise_expr = Forward().setName("bitwise_expr")
     bitwise_op = Literal('&') | Literal('^') | Literal('|')
-    do_bitwise = shift_expr("left") + bitwise_op("op") + bitwise_expr("right")
+    do_bitwise = Group(shift_expr)("left") + bitwise_op("op") +\
+                 Group(bitwise_expr)("right")
     bitwise_expr <<= Alternate3(shift_expr, do_bitwise, "do_bitwise")
     additive_expr = Forward().setName("additive_expr")
     additive_op = Literal('+') | Literal('-')
-    do_additive = bitwise_expr("left") + additive_op("op") + additive_expr("right")
+    do_additive = Group(bitwise_expr)("left") + additive_op("op") +\
+                  Group(additive_expr)("right")
     additive_expr <<= Alternate3(bitwise_expr, do_additive, "do_additive")
     relation_op = Literal('<') | Literal('>') | Literal('<=') | Literal('>=')
-    do_relation = additive_expr("left") + relation_op("op") + additive_expr("right")
+    do_relation = Group(additive_expr)("left") + relation_op("op") +\
+                  Group(additive_expr)("right")
     relation_expr = Alternate3(additive_expr, do_relation, "do_relation")
     equality_expr = Forward().setName("equality_expr")
     equality_op = Literal('==') | Literal('!=')
-    do_equality = relation_expr("left") + equality_op("op") + equality_expr("right")
+    do_equality = Group(relation_expr)("left") + equality_op("op") +\
+                  Group(equality_expr)("right")
     equality_expr <<= Alternate3(relation_expr, do_equality, "do_equality")
     and_expr = Forward().setName("and_expr")
-    do_and = equality_expr("left") + Suppress(Literal('&&')) + and_expr("right")
+    do_and = Group(equality_expr)("left") + Suppress(Literal('&&')) +\
+             Group(and_expr)("right")
     and_expr <<= Alternate3(equality_expr, do_and, "do_and")
     or_expr = Forward().setName("or_expr")
-    do_or = and_expr("left") + Suppress(Literal('||')) + or_expr("right")
+    do_or = Group(and_expr)("left") + Suppress(Literal('||')) +\
+            Group(or_expr)("right")
     or_expr <<= Alternate3(and_expr, do_or, "do_or")
     ternary_expr = Forward().setName("ternary_expr")
-    do_ternary = or_expr("cond") + Suppress(Literal('?')) + \
-                 expression("true") + Suppress(Literal(':')) + \
-                 ternary_expr("false")
+    do_ternary = Group(or_expr)("cond") + Suppress(Literal('?')) + \
+                 Group(expression)("true") + Suppress(Literal(':')) + \
+                 Group(ternary_expr)("false")
     ternary_expr <<= Alternate3(or_expr, do_ternary, "do_ternary")
-    assign_expr = Forward().setName("assign_expr")
     assign_op = Literal('=') | Literal('+=') | Literal('-=') | Literal('&=') |\
                 Literal('|=') | Literal('^=') | Literal('<<=') | Literal('>>=')
-    do_assign = unary_expr("left") + assign_op("op") + assign_expr("right")
+    do_assign = Group(unary_expr)("left") + assign_op("op") +\
+                Group(assign_expr)("right")
     assign_expr <<= Alternate3(ternary_expr, do_assign, "do_assign")
     expression <<= delimitedList(assign_expr)
     source = OneOrMore(declare)
