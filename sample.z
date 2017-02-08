@@ -55,8 +55,7 @@ struct u32
 
 struct two_u32 /* nested structs test */
 {
-	struct u32 x;
-	struct u32 y;
+	struct u32 x, y;
 };
 
 struct u32 number_of_foos;
