@@ -19,6 +19,8 @@ byte (*h(byte))(word); // declares h as function (byte) returning pointer to fun
 
 byte (**(*name_i)(byte))(word); // declares _i as pointer to function (byte) returning pointer to pointer to function (word) returning byte
 
+byte call_byte_fn(byte (*)()); // declares call_byte_fn as function (pointer to function returning byte) returning byte
+
 static bool question(byte answer)
 {
 	return answer == answer_to_everything;
