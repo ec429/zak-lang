@@ -51,9 +51,9 @@ class Parser(object):
              OGroup(struct_body, "body")
     enum_const = (Literal('$') + identifier)
     assign_expr = Forward().setName("assign_expr")
-    enum_defn = Group(enum_const)("name") + Suppress(Literal('=')) +\
-                Group(assign_expr)("value")
-    enum_body = Suppress(Literal('{')) + delimitedList(enum_defn) +\
+    enum_defn = Group(enum_const)("name") +\
+                Optional(Suppress(Literal('=')) + Group(assign_expr)("value"))
+    enum_body = Suppress(Literal('{')) + delimitedList(Group(enum_defn)) +\
                 Suppress(Optional(Literal(','))) + Suppress(Literal('}'))
     enum = Suppress(Keyword('enum')) + identifier("etag") +\
            OGroup(enum_body, "body")
