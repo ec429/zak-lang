@@ -77,51 +77,44 @@ class Parser(object):
     register = Alternate({'reg8': reg8, 'reg16': reg16, 'regf': regf})
     regparm = Suppress(Literal('@')) + register
     decl_spec = Forward().setName("decl_spec")
-    array_decl = NoMatch() # TODO
+    # declarations grammar TODO
+    """
+    <array-decl>    ::= <direct-decl> '[' <expression> ']'
+    <func-decl>     ::= <direct-decl> <regparm>? '(' <param-types> ')'
+    <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
+    <abs-func-decl> ::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
+    """
     abstract_decl = Forward().setName("abstract_decl")
-    dir_abs_decl = Forward().setName("dir_abs_decl")
-    abs_arr_decl = NoMatch() # TODO
     param_types = Forward().setName("param_types")
-    dir_abs_decl_no_func = Alternate2(Suppress(Literal('(')) + abstract_decl +
-                                      Suppress(Literal(')')),
-                                      {'abs_arr_decl': abs_arr_decl,
-                                       })
-    abs_func_decl = OGroup(dir_abs_decl_no_func, 'callee') +\
-                    OneOrMore(Suppress(Literal('(')) + param_types +
-                              Suppress(Literal(')')))
-    dir_abs_decl <<= Alternate2R(Suppress(Literal('(')) + abstract_decl +
-                                 Suppress(Literal(')')),
-                                 {'abs_arr_decl': abs_arr_decl,
-                                  'abs_func_decl': abs_func_decl,
-                                  })
+    function_decl_tail = OGroup(regparm, "regparm") +\
+                         Suppress(Literal('(')) + param_types("params") +\
+                         Suppress(Literal(')'))
+    array_decl_tail = NoMatch() # TODO
+    dir_abs_decl_primary = (Suppress(Literal('(')) + abstract_decl +
+                            Suppress(Literal(')')))
+    dir_abs_decl_tail = Alternate({'function': function_decl_tail,
+                                    'array': array_decl_tail,
+                                    })
+    dir_abs_decl = (OGroup(dir_abs_decl_primary, "primary") +
+                    Group(OneOrMore(dir_abs_decl_tail))("tail")) |\
+                   Group(dir_abs_decl_primary)("primary")
     abstract_decl <<= (OGroup(pointer, "pointer") +
-                       dir_abs_decl("dir_abs_decl")) |\
+                       dir_abs_decl) |\
                       Group(pointer)("pointer")
     param_decl = Group(ty_pe)("type") + OGroup(regparm, "regparm") +\
                  Optional(Alternate([('decl_spec', decl_spec),
                                      ('abstract_decl', abstract_decl),
                                      ]))
-    param_types <<= delimitedList(Group(param_decl))
-    direct_decl = Forward()
-    direct_decl_no_func = Alternate2(Suppress(Literal('(')) + decl_spec +
-                                     Suppress(Literal(')')),
-                                     [('array_decl', array_decl),
-                                      ('identifier', identifier),
-                                      ])
-    rfunc_decl = Group(regparm)("regparm") +\
-                 Group(direct_decl)("callee") +\
-                 Suppress(Literal('(')) + param_types("params") +\
-                 Suppress(Literal(')'))
-    func_decl = OGroup(regparm, "regparm") +\
-                Group(direct_decl_no_func)("callee") +\
-                OneOrMore(Suppress(Literal('(')) + param_types("params") +
-                          Suppress(Literal(')')))
-    direct_decl <<= Alternate2R(Suppress(Literal('(')) + decl_spec +
-                                Suppress(Literal(')')),
-                                [('array_decl', array_decl),
-                                 ('func_decl', func_decl | rfunc_decl),
-                                 ('identifier', identifier),
-                                 ])
+    param_types <<= Optional(delimitedList(Group(param_decl)))
+    direct_decl_primary = (Suppress(Literal('(')) + decl_spec +
+                           Suppress(Literal(')'))) |\
+                          identifier("identifier")
+    direct_decl_tail = Alternate({'function': function_decl_tail,
+                                  'array': array_decl_tail,
+                                  })
+    direct_decl = Forward().setName("direct_decl")
+    direct_decl <<= direct_decl_primary +\
+                    OGroup(OneOrMore(direct_decl_tail), "tail")
     decl_spec <<= OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl")
     initialiser = Suppress(Literal('=')) + assign_expr
     object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
