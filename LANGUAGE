@@ -41,7 +41,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <pointer>	::= '*' <qualifier-list>? <pointer>?
 <direct-decl>	::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
 <array-decl>	::= <direct-decl> '[' <expression> ']'
-<func-decl>	::= <regparm>? <direct-decl> '(' <param-types> ')'
+<func-decl>	::= <direct-decl> <regparm>? '(' <param-types> ')'
 <param-types>	::= <param-decl> (',' <param-types>)?
 <param-decl>	::= <type> <regparm>? (<decl-spec> | <abstract-decl>)
 <regparm>	::= '@' <register>
@@ -52,11 +52,11 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <abstract-decl>	::= <pointer> | <pointer>? <dir-abs-decl>
 <dir-abs-decl>	::= '(' <abstract-decl> ')' | <abs-arr-decl> | <abs-func-decl>
 <abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
-<abs-func-decl>	::= <dir-abs-decl>? '(' <param-types> ')'
+<abs-func-decl>	::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
 <initialiser>	::= '=' <expression>
 
-<function-defn>	::= <regparm>? <identifier> '(' <param-types> ')' <block-stmt>
+<function-defn>	::= <identifier> <regparm>? '(' <param-types> ')' <block-stmt>
 <block-stmt>	::= '{' <declare-list>? <stmt-list>? '}'
 <declare-list>	::= <declare> <declare-list>?
 <stmt-list>	::= <statement> <stmt-list>?
