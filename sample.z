@@ -60,13 +60,13 @@ struct two_u32 /* nested structs test */
 
 struct u32 number_of_foos;
 
-/*void add_u32(struct u32 *dst, struct u32 *src)
+void add_u32(struct u32 *dst, struct u32 *src)
 {
 	dst->lo += src->lo;
 	if (#C) // test carry flag
 		dst->hi++;
 	dst->hi += src->hi;
-}*/
+}
 
 extern void puts(byte *);
 
@@ -76,7 +76,7 @@ byte main(void)
 	struct u32 bar_count;
 	byte *offset;
 
-	//bar_count.hi = 0;
+	bar_count.hi = 0;
 	offset = hello;
 	offset += 6;
 	strcpy(offset, "world!");
