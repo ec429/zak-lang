@@ -94,10 +94,13 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * have weird lifetime rules, creating (when inside a function) anonymous auto
  * objects with all kinds of weird rules.  Just declare a named auto object,
  * instead, then its lifetime and scope are plainly defined.
- * Finally, XXX beware!  The parser uses right-recursion, which means that
- * binary operators are right-associative, CONTRADICTING the grammar below.
- * This was necessary because left-associative definitions lead to left-
- * recursion which infinite-loops the parser :(
+ * Finally, note that binary operators are right-associative, which is the
+ * opposite of what you'd expect from C.  "a - b - c" is parsed as
+ * "a - (b - c)", which is roughly "a + c - b"!   This was necessary because
+ * left-associative definitions lead to left-recursion which infinite-loops the
+ * parser :(  On the other hand, sometimes right-associativity is what you want,
+ * for instance with shifts ("wordval >> byte_select << 3") or bitwise masking
+ * ("register & $FLAG_FOO | $FLAG_BAR").  Just remember: we're not C!
  */
 <primary-expr>	::= <identifier> | <constant> | <string-literal> |
 		    <flag-ident> | '(' <expression> ')'
@@ -118,7 +121,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <flag-name>	::= 'S' | 'Z' | 'H' | 'P' | 'N' | 'C'
 
 <postfix-expr>	::= <primary-expr> | <subscript-expr> | <funcall-expr> |
-		    <member-expr> | <postcrem-expr> | <compound-lit>
+		    <member-expr> | <postcrem-expr>
 <subscript-expr>::= <postfix-expr> '[' <expression> ']'
 <funcall-expr>	::= <postfix-expr> '(' (<arg-expr-list> ','?)? ')'
 <arg-expr-list> ::= <assign-expr> (',' <assign-expr>)
@@ -135,14 +138,14 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 /* We disallow 'sizeof' without brackets */
 <sizeof-expr>	::= 'sizeof' '(' (<type-name> | <unary-expr>) ')'
 <shift-expr>	::= <cast-expr> |
-		    <shift-expr> ('<<' | '>>') <cast-expr>
+		    <cast-expr> ('<<' | '>>') <shift-expr>
 <bitwise-expr>	::= <shift-expr> |
-		    <bitwise-expr> '&' <shift-expr> |
-		    <bitwise-expr> '^' <shift-expr> |
-		    <bitwise-expr> '|' <shift-expr>
+		    <shift-expr> '&' <bitwise-expr> |
+		    <shift-expr> '^' <bitwise-expr> |
+		    <shift-expr> '|' <bitwise-expr>
 <additive-expr>	::= <bitwise-expr> |
-		    <additive-expr> '+' <bitwise-expr> |
-		    <additive-expr> '-' <bitwise-expr>
+		    <bitwise-expr> '+' <additive-expr> |
+		    <bitwise-expr> '-' <additive-expr>
 /* We disallow chains of relations, like a < b < c, because (a < b) has type
  * bool, which is not an arithmetic type in zak; if you want the C meaning of
  * this (a < b ? 1 : 0) < c, either use that ternary conditional, or (more
@@ -152,11 +155,11 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <relation-expr> ::= <additive-expr> |
 		    <additive-expr> ('<' | '>' | '<=' | '>=') <additive-expr>
 <equality-expr>	::= <relation-expr> |
-		    <equality-expr> ('==' | '!=') <relation-expr>
+		    <relation-expr> ('==' | '!=') <equality-expr>
 <and-expr>	::= <equality-expr> |
-		    <and-expr> '&&' <equality-expr>
+		    <equality-expr> '&&' <and-expr>
 <or-expr>	::= <and-expr> |
-		    <or-expr> '||' <and-expr>
+		    <and-expr> '||' <or-expr>
 <ternary-expr>	::= <or-expr> |
 		    <or-expr> '?' <expression> ':' <ternary-expr>
 <assign-expr>	::= <ternary-expr> |
