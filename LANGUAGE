@@ -56,7 +56,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <type-name>	::= <type> <abstract-decl>
 <initialiser>	::= '=' <expression>
 
-<function-defn>	::= <identifier> <regparm>? '(' <param-types> ')' <block-stmt>
+<function-defn>	::= <storage-class>? <qualifier-list>? <type> <decl_spec> <block-stmt>
 <block-stmt>	::= '{' <declare-list>? <stmt-list>? '}'
 <declare-list>	::= <declare> <declare-list>?
 <stmt-list>	::= <statement> <stmt-list>?
