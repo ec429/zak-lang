@@ -1,0 +1,20 @@
+enum colours {
+	$RED,
+	$GREEN	= 020,
+	$BLUE,
+
+	$NUM_COLOURS
+};
+
+byte rgb[3];
+
+byte main(void)
+{
+	rgb[0] = 0xff;
+	rgb[1] = 0x7f;
+	rgb[2] = 0;
+
+	return 0;
+}
+
+byte colours[$NUM_COLOURS][3];
