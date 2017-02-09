@@ -6,12 +6,6 @@ ParserElement.enablePackrat()
 
 ## Parser
 
-# declarations grammar TODO
-"""
-<array-decl>    ::= <direct-decl> '[' <expression> ']'
-<abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
-"""
-
 # expressions grammar TODO
 """
 <compound-lit>  ::= '(' <type-name> ')' '{' <initialiser-list> ','? '}'
@@ -49,7 +43,7 @@ class Parser(object):
                   Suppress(Literal('}'))
     struct = Suppress(Keyword('struct')) + identifier("stag") +\
              OGroup(struct_body, "body")
-    enum_const = (Literal('$') + identifier)
+    enum_const = (Suppress(Literal('$')) + identifier)
     assign_expr = Forward().setName("assign_expr")
     enum_defn = Group(enum_const)("name") +\
                 Optional(Suppress(Literal('=')) + Group(assign_expr)("value"))
@@ -77,26 +71,21 @@ class Parser(object):
     register = Alternate({'reg8': reg8, 'reg16': reg16, 'regf': regf})
     regparm = Suppress(Literal('@')) + register
     decl_spec = Forward().setName("decl_spec")
-    # declarations grammar TODO
-    """
-    <array-decl>    ::= <direct-decl> '[' <expression> ']'
-    <func-decl>     ::= <direct-decl> <regparm>? '(' <param-types> ')'
-    <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
-    <abs-func-decl> ::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
-    """
     abstract_decl = Forward().setName("abstract_decl")
     param_types = Forward().setName("param_types")
     function_decl_tail = OGroup(regparm, "regparm") +\
                          Suppress(Literal('(')) + param_types("params") +\
                          Suppress(Literal(')'))
-    array_decl_tail = NoMatch() # TODO
+    expression = Forward().setName("expression")
+    array_decl_tail = Suppress(Literal('[')) + Group(expression)("dimension") +\
+                      Suppress(Literal(']'))
     dir_abs_decl_primary = (Suppress(Literal('(')) + abstract_decl +
                             Suppress(Literal(')')))
     dir_abs_decl_tail = Alternate({'function': function_decl_tail,
                                     'array': array_decl_tail,
                                     })
     dir_abs_decl = (OGroup(dir_abs_decl_primary, "primary") +
-                    Group(OneOrMore(dir_abs_decl_tail))("tail")) |\
+                    Group(OneOrMore(Group(dir_abs_decl_tail)))("tail")) |\
                    Group(dir_abs_decl_primary)("primary")
     abstract_decl <<= (OGroup(pointer, "pointer") +
                        dir_abs_decl) |\
@@ -114,16 +103,18 @@ class Parser(object):
                                   })
     direct_decl = Forward().setName("direct_decl")
     direct_decl <<= direct_decl_primary +\
-                    OGroup(OneOrMore(direct_decl_tail), "tail")
+                    OGroup(OneOrMore(Group(direct_decl_tail)), "tail")
     decl_spec <<= OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl")
     initialiser = Suppress(Literal('=')) + assign_expr
-    object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
-                        OGroup(initialiser, 'initialiser'))("object_decl")
+    object_decl = Group(decl_spec)("decl_spec") +\
+                  OGroup(initialiser, 'initialiser')
     object_decls <<= delimitedList(Group(object_decl)) | Empty()
-    declare = Forward()
+    declaration = object_decls + Suppress(Literal(';'))
+    declare = Group(OGroup(storage_class, 'storage_class') +
+                    OGroup(qualifier_list, 'qualifier_list') +
+                    Group(ty_pe)("type") + Group(declaration)("declaration"))
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
-    expression = Forward().setName("expression")
     expr_stmt = expression + Suppress(Literal(';'))
     statement = Forward()
     else_clause = Suppress(Keyword('else')) + statement
@@ -147,16 +138,10 @@ class Parser(object):
                    OGroup(declare_list, "declare_list") +\
                    OGroup(stmt_list, "stmt_list") +\
                    Suppress(Literal('}'))
-    function_defn = OGroup(regparm, "regparm") + identifier("identifier") +\
-                    Suppress(Literal('(')) + param_types("param_types") +\
-                    Suppress(Literal(')')) + block_stmt
-    declaration = Alternate({'object_decls': object_decls +
-                                             Suppress(Literal(';')),
-                             'function_defn': function_defn,
-                             })
-    declare <<= Group(OGroup(storage_class, 'storage_class') +\
-                      OGroup(qualifier_list, 'qualifier_list') +\
-                      Group(ty_pe)("type") + Group(declaration)("declaration"))
+    function_defn = Group(OGroup(storage_class, 'storage_class') +
+                          OGroup(qualifier_list, 'qualifier_list') +
+                          Group(ty_pe)("type") + Group(decl_spec)("decl_spec") +
+                          block_stmt)("function_defn")
     type_name = ty_pe("type") + abstract_decl("abstract_decl")
     dec_const = Word('123456789', nums)
     hex_const = Suppress(Word('0', 'xX', exact=2)) + Word(hexnums)
@@ -184,7 +169,7 @@ class Parser(object):
                                             expression +
                                             Suppress(Literal(')')),
                               })
-    subscript_tail = Suppress(Literal('[')) + expression("subscript") +\
+    subscript_tail = Suppress(Literal('[')) + Group(expression)("subscript") +\
                      Suppress(Literal(']'))
     arg_expr_list = delimitedList(Group(assign_expr))
     funcall_tail = Suppress(Literal('(')) +\
@@ -261,7 +246,7 @@ class Parser(object):
                 Group(assign_expr)("right")
     assign_expr <<= Alternate3(ternary_expr, do_assign, "do_assign")
     expression <<= delimitedList(assign_expr)
-    source = OneOrMore(declare)
+    source = OneOrMore(Group(declare("declare") | function_defn))
     source.ignore(cppStyleComment)
     @classmethod
     def parse(cls, text):
