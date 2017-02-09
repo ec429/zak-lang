@@ -54,7 +54,11 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
 <abs-func-decl>	::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
-<initialiser>	::= '=' <expression>
+<initialiser>	::= '=' (<expression> | '{' <init-list> ','? '}')
+<init-list>	::= (<init-list> ',')? <designation>? <initialiser>
+<designation>	::= <desigtor-list> '='
+<desigtor-list>	::= <desigtor-list? <designator>
+<designator>	::= '[' <expression> ']' | '.' <identifier>
 
 <function-defn>	::= <storage-class>? <qualifier-list>? <type> <decl_spec> <block-stmt>
 <block-stmt>	::= '{' <declare-list>? <stmt-list>? '}'
@@ -86,6 +90,10 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * Also, note that we have no multiplication or division operators, because
  * those are quite expensive on a Z80; forcing them to be done with function
  * calls makes them _feel_ expensive and less likely to be used unnecessarily.
+ * We don't support compound literals, because (unlike initialiser lists) they
+ * have weird lifetime rules, creating (when inside a function) anonymous auto
+ * objects with all kinds of weird rules.  Just declare a named auto object,
+ * instead, then its lifetime and scope are plainly defined.
  * Finally, XXX beware!  The parser uses right-recursion, which means that
  * binary operators are right-associative, CONTRADICTING the grammar below.
  * This was necessary because left-associative definitions lead to left-
@@ -118,7 +126,6 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <memdot-expr>	::= <postfix-expr> '.' <identifier>
 <memptr-expr>	::= <postfix-expr> '->' <identifier>
 <postcrem-expr>	::= <postfix-expr> ('++' | '--')
-<compound-lit>	::= '(' <type-name> ')' '{' <initialiser-list> ','? '}'
 
 <unary-expr>	::= <postfix-expr> | <precrem-expr> | <unary-op> <cast-expr> |
 		    <sizeof-expr>

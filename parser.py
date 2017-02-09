@@ -6,9 +6,13 @@ ParserElement.enablePackrat()
 
 ## Parser
 
-# expressions grammar TODO
+# grammar TODO
 """
-<compound-lit>  ::= '(' <type-name> ')' '{' <initialiser-list> ','? '}'
+<initialiser>   ::= '=' (<expression> | '{' <init-list> ','? '}')
+<init-list>     ::= (<init-list> ',')? <designation>? <initialiser>
+<designation>   ::= <desigtor-list> '='
+<desigtor-list> ::= <desigtor-list? <designator>
+<designator>    ::= '[' <expression> ']' | '.' <identifier>
 """
 
 def OGroup(token, name):
