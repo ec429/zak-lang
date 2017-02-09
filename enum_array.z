@@ -17,22 +17,20 @@ byte main(void)
 	return 0;
 }
 
-byte colours[$NUM_COLOURS][3];
-
-void populate_colours(void)
-{
-	colours[$RED][0] = colours[$GREEN][1] = colours[$BLUE][2] = 0xff;
-}
+byte colours[$NUM_COLOURS][3] = {
+	[$RED][0] = 0xff,
+	[$GREEN][1] = 0xff,
+	[$BLUE][2] = 0xff,
+};
 
 /* This is illegal, a function can't return an array */
 byte get_colour(enum colours col)[3];
 
-byte no_colour[3];
+byte no_colour[3] = {0x7f, 0x7f, 0x7f};
 
 byte (*get_colour_p(enum colours col))[3]
 {
 	if (col < $NUM_COLOURS)
 		return &colours[col];
-	no_colour[0] = no_colour[1] = no_colour[2] = 0x7f;
 	return &no_colour;
 }
