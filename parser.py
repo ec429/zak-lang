@@ -2,6 +2,7 @@
 
 import re, sys, pprint
 from pyparsing import *
+ParserElement.enablePackrat()
 
 ## Parser
 
