@@ -36,7 +36,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <enum-body>	::= '{' <enum-defns> ','? '}'
 <enum-defns>	::= <enum-defn> (',' <enum-defns>)?
 <enum-defn>	::= <enum-const> ('=' <expression>)?
-<object-decl>	::= <register> <decl-spec> <initialiser>
+<object-decl>	::= <decl-spec> <initialiser>
 <decl-spec>	::= <pointer>? <direct-decl>
 <pointer>	::= '*' <qualifier-list>? <pointer>?
 <direct-decl>	::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
