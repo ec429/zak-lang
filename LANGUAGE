@@ -112,7 +112,8 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <postfix-expr>	::= <primary-expr> | <subscript-expr> | <funcall-expr> |
 		    <member-expr> | <postcrem-expr> | <compound-lit>
 <subscript-expr>::= <postfix-expr> '[' <expression> ']'
-<funcall-expr>	::= <postfix-expr> '(' <arg-expr-list>? ')'
+<funcall-expr>	::= <postfix-expr> '(' (<arg-expr-list> ','?)? ')'
+<arg-expr-list> ::= <assign-expr> (',' <assign-expr>)
 <member-expr>	::= <memdot-expr> | <memptr-expr>
 <memdot-expr>	::= <postfix-expr> '.' <identifier>
 <memptr-expr>	::= <postfix-expr> '->' <identifier>

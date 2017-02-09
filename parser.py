@@ -7,18 +7,6 @@ from pyparsing import *
 
 # declarations grammar TODO
 """
-<type>		::= 'void' | 'bool' | 'byte' | 'word' | <struct> | <enum>
-<struct>	::= 'struct' <stag> <struct-body>?
-<stag>		::= <identifier>
-<struct-body>	::= '{' <struct-decls> '}'
-<struct-decls>	::= <struct-decl> <struct-decls>?
-<struct-decl>	::= <qualifier-list>? <type> <object-decls> ';'
-<enum>		::= 'enum' <etag> <enum-body>?
-<etag>		::= <identifier>
-<enum-body>	::= '{' <enum-defns> ','? '}'
-<enum-defns>	::= <enum-defn> (',' <enum-defns>)?
-<enum-defn>	::= <enum-const> '=' <expression>
-
 <array-decl>    ::= <direct-decl> '[' <expression> ']'
 <abs-arr-decl>  ::= <dir-abs-decl>? '[' <expression> ']'
 """
@@ -61,9 +49,9 @@ class Parser(object):
     struct = Suppress(Keyword('struct')) + identifier("stag") +\
              OGroup(struct_body, "body")
     enum_const = (Literal('$') + identifier)
-    expression = Forward().setName("expression")
+    assign_expr = Forward().setName("assign_expr")
     enum_defn = Group(enum_const)("name") + Suppress(Literal('=')) +\
-                Group(expression)("value")
+                Group(assign_expr)("value")
     enum_body = Suppress(Literal('{')) + delimitedList(enum_defn) +\
                 Suppress(Optional(Literal(','))) + Suppress(Literal('}'))
     enum = Suppress(Keyword('enum')) + identifier("etag") +\
@@ -134,7 +122,6 @@ class Parser(object):
                                  ('identifier', identifier),
                                  ])
     decl_spec <<= OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl")
-    assign_expr = Forward().setName("assign_expr")
     initialiser = Suppress(Literal('=')) + assign_expr
     object_decl = Group(OGroup(register, 'register') + Group(decl_spec)("decl_spec") +\
                         OGroup(initialiser, 'initialiser'))("object_decl")
@@ -142,6 +129,7 @@ class Parser(object):
     declare = Forward()
     declare_list = OneOrMore(declare)
     block_stmt = Forward()
+    expression = Forward().setName("expression")
     expr_stmt = expression + Suppress(Literal(';'))
     statement = Forward()
     else_clause = Suppress(Keyword('else')) + statement
@@ -204,7 +192,10 @@ class Parser(object):
                               })
     subscript_tail = Suppress(Literal('[')) + expression("subscript") +\
                      Suppress(Literal(']'))
-    funcall_tail = NoMatch() # TODO
+    arg_expr_list = delimitedList(Group(assign_expr))
+    funcall_tail = Suppress(Literal('(')) +\
+                   Group(arg_expr_list + Optional(Suppress(Literal(','))))\
+                          ("arg_list") + Suppress(Literal(')'))
     member_op = Literal('->') | Literal('.')
     member_tail = member_op("op") + identifier("tag")
     postcrem_tail = (Literal('++') | Literal('--'))("op")
