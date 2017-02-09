@@ -21,7 +21,7 @@ def Alternate3(p, q, n):
 def Litor(*args):
     return MatchFirst(Literal(s) for s in args)
 def Keyor(*args):
-    return MatchFirst(Keyword(s) for s in args)
+    return Alternate([(k, Suppress(Keyword(k))) for k in args])
 
 class Parser(object):
     identifier = Word(alphas + '_', alphanums + '_').setName("identifier")
