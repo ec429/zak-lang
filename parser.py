@@ -206,7 +206,7 @@ class Parser(object):
                               'member_tail': member_tail,
                               'postcrem_tail': postcrem_tail,
                               })
-    postfix_expr = (Group(primary_expr) + OneOrMore(Group(postfix_tail))("postfix_tail")) |\
+    postfix_expr = (Group(primary_expr)("primary_expr") + OneOrMore(Group(postfix_tail))("postfix_tail")) |\
                    Group(compound_lit)("compound_lit") |\
                    primary_expr
     unary_expr = Forward().setName("unary_expr")
