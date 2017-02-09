@@ -6,15 +6,6 @@ ParserElement.enablePackrat()
 
 ## Parser
 
-# grammar TODO
-"""
-<initialiser>   ::= '=' (<expression> | '{' <init-list> ','? '}')
-<init-list>     ::= (<init-list> ',')? <designation>? <initialiser>
-<designation>   ::= <desigtor-list> '='
-<desigtor-list> ::= <desigtor-list? <designator>
-<designator>    ::= '[' <expression> ']' | '.' <identifier>
-"""
-
 def OGroup(token, name):
     return Optional(Group(token).setResultsName(name).setName(name))
 def Alternate(l):
@@ -109,9 +100,23 @@ class Parser(object):
     direct_decl <<= direct_decl_primary +\
                     OGroup(OneOrMore(Group(direct_decl_tail)), "tail")
     decl_spec <<= OGroup(pointer, "pointer") + Group(direct_decl)("direct_decl")
-    initialiser = Suppress(Literal('=')) + assign_expr
+    initialiser = Forward()
+    array_designator = Suppress(Literal('[')) + Group(expression)("subscript") +\
+                       Suppress(Literal(']'))
+    member_designator = Suppress(Literal('.')) + identifier("tag")
+    designator = Alternate({'array': array_designator,
+                            'member': member_designator,
+                            })
+    designation = OneOrMore(Group(designator)) + Suppress(Literal('='))
+    designated_initialiser = OGroup(designation, "designation") +\
+                             Group(initialiser)("initialiser")
+    initialiser_list = delimitedList(Group(designated_initialiser)) +\
+                       Optional(Suppress(Literal(',')))
+    init_list = Suppress(Literal('{')) + Group(initialiser_list)("init_list") +\
+                Suppress(Literal('}'))
+    initialiser <<= (assign_expr | init_list)
     object_decl = Group(decl_spec)("decl_spec") +\
-                  OGroup(initialiser, 'initialiser')
+                  OGroup(Suppress(Literal('=')) + initialiser, 'initialiser')
     object_decls <<= delimitedList(Group(object_decl)) | Empty()
     declaration = object_decls + Suppress(Literal(';'))
     declare = Group(OGroup(storage_class, 'storage_class') +
@@ -182,14 +187,12 @@ class Parser(object):
     member_op = Literal('->') | Literal('.')
     member_tail = member_op("op") + identifier("tag")
     postcrem_tail = (Literal('++') | Literal('--'))("op")
-    compound_lit = NoMatch() # TODO
     postfix_tail = Alternate({'subscript_tail': subscript_tail,
                               'funcall_tail': funcall_tail,
                               'member_tail': member_tail,
                               'postcrem_tail': postcrem_tail,
                               })
     postfix_expr = (Group(primary_expr)("primary_expr") + OneOrMore(Group(postfix_tail))("postfix_tail")) |\
-                   Group(compound_lit)("compound_lit") |\
                    primary_expr
     unary_expr = Forward().setName("unary_expr")
     unary_op = Literal('&') | Literal('*') | Literal('~') | Literal('!')
