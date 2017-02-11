@@ -18,6 +18,8 @@ class Type(object):
 
 class Void(Type):
     name = 'void'
+class Bool(Type):
+    name = 'bool'
 class Byte(Type):
     name = 'byte'
 class Word(Type):
@@ -26,6 +28,8 @@ class Word(Type):
 def get_type(typ):
     if typ.get('void') is not None:
         return Void()
+    if typ.get('bool') is not None:
+        return Bool()
     if typ.get('byte') is not None:
         return Byte()
     if typ.get('word') is not None:
@@ -131,9 +135,15 @@ def Constant(expr):
         raise UnhandledEntity(expr['char_const'])
     raise UnhandledEntity(expr)
 
+class Identifier(object):
+    def __init__(self, ident):
+        self.ident = ident[0]
+    def __str__(self):
+        return self.ident
+
 def DoPrimary(expr):
     if expr.get('identifier') is not None:
-        raise UnhandledEntity(expr['identifier'])
+        return Identifier(expr['identifier'])
     if expr.get('constant') is not None:
         return Constant(expr['constant'])
     if expr.get('string_literal') is not None:
@@ -160,55 +170,73 @@ def DoUnary(expr):
 
 def DoCast(expr):
     if expr.get('do_cast') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_cast'])
     return DoUnary(expr)
+
+class BinaryExpr(object):
+    def __str__(self):
+        return '%s(%s %s %s)'%(self.__class__.__name__,
+                               self.left, self.op, self.right)
 
 def DoShift(expr):
     if expr.get('do_shift') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_shift'])
     return DoCast(expr)
 
 def DoBitwise(expr):
     if expr.get('do_bitwise') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_bitwise'])
     return DoShift(expr)
 
 def DoAdditive(expr):
     if expr.get('do_additive') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_additive'])
     return DoBitwise(expr)
 
 def DoRelation(expr):
     if expr.get('do_relation') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_relation'])
     return DoAdditive(expr)
 
+class EqualityExpr(BinaryExpr):
+    def __init__(self, expr):
+        self.left = DoRelation(expr['left'])
+        self.op = expr['op']
+        self.right = DoEquality(expr['right'])
+
 def DoEquality(expr):
+    # <equality-expr> ::= <relation-expr> | <relation-expr> ('==' | '!=') <equality-expr>
     if expr.get('do_equality') is not None:
-        raise UnhandledEntity(expr)
+        return EqualityExpr(expr['do_equality'])
     return DoRelation(expr)
 
 def DoAnd(expr):
     if expr.get('do_and') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_and'])
     return DoEquality(expr)
 
 def DoOr(expr):
     if expr.get('do_or') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_or'])
     return DoAnd(expr)
 
 def DoTernary(expr):
     # <ternary-expr>  ::= <or-expr> | <or-expr> '?' <expression> ':' <ternary-expr>
     if expr.get('do_ternary') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_ternary'])
     return DoOr(expr)
 
 def DoAssign(expr):
     # <assign-expr>   ::= <ternary-expr> | <unary-expr> <assign-op> <assign-expr>
     if expr.get('do_assign') is not None:
-        raise UnhandledEntity(expr)
+        raise UnhandledEntity(expr['do_assign'])
     return DoTernary(expr)
+
+def DoExpression(expr):
+    # <expression>    ::= <assign-expr> | <assign-expr> ',' <expression>
+    if expr.get('do_comma') is not None:
+        raise UnhandledEntity(expr['do_comma'])
+    return DoAssign(expr)
 
 def Initialiser(init):
     # '=' (<expression> | '{' <init-list> ','? '}')
@@ -256,6 +284,56 @@ class Declare(object):
     def __str__(self):
         return '\n'.join(['declare %s'%(d,) for d in  self.declarations])
 
+class ReturnStatement(object):
+    def __init__(self, rs):
+        self.value = rs.get('value')
+        if self.value is not None:
+            self.value = DoExpression(self.value)
+    def __str__(self):
+        if self.value is None:
+            return 'return;'
+        return 'return %s;' % (self.value,)
+
+def Statement(stmt):
+    if stmt.get('return_stmt') is not None:
+        return ReturnStatement(stmt['return_stmt'])
+    raise UnhandledEntity(stmt)
+
+class BlockStatement(object):
+    def __init__(self, block):
+        if block.get('declare_list') is not None:
+            raise UnhandledEntity(block['declare_list'])
+        stmts = block.get('stmt_list', [])
+        self.stmts = [Statement(stmt) for stmt in stmts]
+    def __str__(self):
+        return ' '.join(map(str, ['{'] + self.stmts + ['}']))
+
+class FunctionDefn(object):
+    # <function-defn> ::= <storage-class>? <qualifier-list>? <type> <decl_spec> <block-stmt>
+    def __init__(self, defn):
+        self.sc = defn.get('storage_class')
+        if self.sc is not None:
+            if self.sc.get('static') is not None:
+                self.sc = StorageClass('static')
+            elif self.sc.get('extern') is not None:
+                self.sc = StorageClass('extern')
+            elif self.sc.get('auto') is not None:
+                self.sc = StorageClass('auto')
+            else:
+                raise UnhandledEntity(self.sc)
+        if defn.get('qualifier_list') is not None:
+            raise UnhandledEntity(defn['qualifier_list'])
+        self.typ = get_type(defn['type'])
+        if self.typ is None:
+            raise UnhandledEntity(defn['type'])
+        self.decl_spec = DeclSpec(defn['decl_spec'], self.typ)
+        self.body = BlockStatement(defn)
+    def __str__(self):
+        s = str(self.decl_spec)
+        if self.sc is not None:
+            s = '%s %s' % (self.sc, s)
+        return 'define %s body %s' % (s, self.body)
+
 class AST_builder(object):
     def __init__(self, parse_tree):
         self.decls = []
@@ -263,6 +341,8 @@ class AST_builder(object):
             for entity in parse_tree:
                 if entity.get('declare'):
                     self.decls.append(Declare(entity['declare']))
+                elif entity.get('function_defn'):
+                    self.decls.append(FunctionDefn(entity['function_defn']))
                 else:
                     raise UnhandledEntity(entity)
         finally:
