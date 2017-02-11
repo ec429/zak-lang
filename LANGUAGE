@@ -54,7 +54,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
 <abs-func-decl>	::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
-<initialiser>	::= '=' (<expression> | '{' <init-list> ','? '}')
+<initialiser>	::= '=' (<assign-expr> | '{' <init-list> ','? '}')
 <init-list>	::= (<init-list> ',')? <designation>? <initialiser>
 <designation>	::= <desigtor-list> '='
 <desigtor-list>	::= <desigtor-list? <designator>
