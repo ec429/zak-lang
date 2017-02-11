@@ -226,10 +226,16 @@ def DoTernary(expr):
         raise UnhandledEntity(expr['do_ternary'])
     return DoOr(expr)
 
+class AssignExpr(BinaryExpr):
+    def __init__(self, expr):
+        self.left = DoUnary(expr['left'])
+        self.op = expr['op']
+        self.right = DoAssign(expr['right'])
+
 def DoAssign(expr):
     # <assign-expr>   ::= <ternary-expr> | <unary-expr> <assign-op> <assign-expr>
     if expr.get('do_assign') is not None:
-        raise UnhandledEntity(expr['do_assign'])
+        return AssignExpr(expr['do_assign'])
     return DoTernary(expr)
 
 def DoExpression(expr):
@@ -294,9 +300,17 @@ class ReturnStatement(object):
             return 'return;'
         return 'return %s;' % (self.value,)
 
+class ExpressionStatement(object):
+    def __init__(self, es):
+        self.expr = DoExpression(es)
+    def __str__(self):
+        return str(self.expr) + ';'
+
 def Statement(stmt):
     if stmt.get('return_stmt') is not None:
         return ReturnStatement(stmt['return_stmt'])
+    if stmt.get('expr_stmt') is not None:
+        return ExpressionStatement(stmt['expr_stmt'])
     raise UnhandledEntity(stmt)
 
 class BlockStatement(object):
