@@ -130,9 +130,9 @@ class Parser(object):
     if_stmt = Suppress(Keyword('if')) + Suppress(Literal('(')) +\
               Group(expression)("condition") + Suppress(Literal(')')) +\
               Group(statement)("true") + OGroup(else_clause, "false")
-    goto_stmt = Suppress(Keyword('goto')) + Group(identifier)("label") +\
+    goto_stmt = Suppress(Keyword('goto')) + identifier("label") +\
                 Suppress(Literal(';'))
-    label_stmt = Group(identifier)("label") + Suppress(Literal(':'))
+    label_stmt = identifier("label") + Suppress(Literal(':'))
     return_stmt = Suppress(Keyword('return')) + OGroup(expression, "value") +\
                   Suppress(Literal(';'))
     statement <<= Alternate({'expr_stmt': expr_stmt,

@@ -338,9 +338,29 @@ class ExpressionStatement(object):
 
 class LabelStatement(object):
     def __init__(self, ls):
-        self.label = ls['label'][0]
+        self.label = ls['label']
     def __str__(self):
         return self.label + ':'
+
+class IfStatement(object):
+    def __init__(self, ifs):
+        self.condition = DoExpression(ifs['condition'])
+        self.true = Statement(ifs['true'])
+        self.false = ifs.get('false')
+        if self.false is not None:
+            self.false = Statement(self.false)
+    def __str__(self):
+        if self.false is None:
+            el = ''
+        else:
+            el = ' else %s' % (self.false,)
+        return 'if (%s) %s%s'%(self.condition, self.true, el)
+
+class GotoStatement(object):
+    def __init__(self, gs):
+        self.label = gs['label']
+    def __str__(self):
+        return 'goto %s;' % (self.label,)
 
 def Statement(stmt):
     if stmt.get('return_stmt') is not None:
@@ -349,6 +369,10 @@ def Statement(stmt):
         return ExpressionStatement(stmt['expr_stmt'])
     if stmt.get('label_stmt') is not None:
         return LabelStatement(stmt['label_stmt'])
+    if stmt.get('if_stmt') is not None:
+        return IfStatement(stmt['if_stmt'])
+    if stmt.get('goto_stmt') is not None:
+        return GotoStatement(stmt['goto_stmt'])
     raise UnhandledEntity(stmt)
 
 class BlockStatement(object):
