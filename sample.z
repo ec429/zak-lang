@@ -21,6 +21,10 @@ byte (**(*name_i)(byte))(word); // declares _i as pointer to function (byte) ret
 
 byte call_byte_fn(byte (*)()); // declares call_byte_fn as function (pointer to function returning byte) returning byte
 
+// prototypes for a couple of functions we actually define later
+byte sum(byte a, byte b);
+void strcpy(byte *dst, byte *src);
+
 static bool question(byte answer)
 {
 	return answer == answer_to_everything;
