@@ -252,7 +252,9 @@ class Parser(object):
     do_assign = Group(unary_expr)("left") + assign_op("op") +\
                 Group(assign_expr)("right")
     assign_expr <<= Alternate3(ternary_expr, do_assign, "do_assign")
-    expression <<= delimitedList(assign_expr)
+    do_comma = Group(assign_expr)("left") + Suppress(Literal(',')) +\
+               Group(expression)("right")
+    expression <<= Alternate3(assign_expr, do_comma, "do_comma")
     source = OneOrMore(Group(declare("declare") | function_defn))
     source.ignore(cppStyleComment)
     @classmethod

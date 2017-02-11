@@ -160,13 +160,24 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 		    <equality-expr> '&&' <and-expr>
 <or-expr>	::= <and-expr> |
 		    <and-expr> '||' <or-expr>
+/* Right-associativity is actually how C handles ternary expressions too, so
+ * we're not weird this time.  "a ? b : c ? d : e" is "a ? b : (c ? d : e)", not
+ * "(a ? b : c) ? d : e".
+ */
 <ternary-expr>	::= <or-expr> |
 		    <or-expr> '?' <expression> ':' <ternary-expr>
 <assign-expr>	::= <ternary-expr> |
 		    <unary-expr> <assign-op> <assign-expr>
 <assign-op>	::= '=' | '+=' | '-=' | '&=' | '|=' | '^=' | '<<=' | '>>='
+/* Clearly associativity doesn't matter for comma-expressions, because they
+ * will get evaluated left-to-right anyway and only the rightmost component
+ * affects the final value.  Thus, while we're right-recursive and C is left-
+ * recursive in the grammar, the resulting semantics are the same.
+ * Concretely, "a,(b,c)" and "(a,b),c" both evaluate a, then b, then c (which
+ * they then return).
+ */
 <expression>	::= <assign-expr> |
-		    <expression> ',' <assign-expr>
+		    <assign-expr> ',' <expression>
 
 Operator Precedence (informative)
 ---------------------------------
