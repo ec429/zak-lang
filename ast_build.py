@@ -288,7 +288,7 @@ class Declare(object):
         # <object-decls>  ::= <object-decl> (',' <object-decls>)?
         self.declarations = [Declaration(d, self.sc, self.typ) for d in declare['declaration']]
     def __str__(self):
-        return '\n'.join(['declare %s'%(d,) for d in  self.declarations])
+        return '\n'.join(['declare %s;'%(d,) for d in self.declarations])
 
 class ReturnStatement(object):
     def __init__(self, rs):
@@ -315,12 +315,12 @@ def Statement(stmt):
 
 class BlockStatement(object):
     def __init__(self, block):
-        if block.get('declare_list') is not None:
-            raise UnhandledEntity(block['declare_list'])
+        decls = block.get('declare_list', [])
+        self.decls = [Declare(decl) for decl in decls]
         stmts = block.get('stmt_list', [])
         self.stmts = [Statement(stmt) for stmt in stmts]
     def __str__(self):
-        return ' '.join(map(str, ['{'] + self.stmts + ['}']))
+        return ' '.join(map(str, ['{'] + self.decls + self.stmts + ['}']))
 
 class FunctionDefn(object):
     # <function-defn> ::= <storage-class>? <qualifier-list>? <type> <decl_spec> <block-stmt>
