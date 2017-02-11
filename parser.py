@@ -69,7 +69,7 @@ class Parser(object):
     abstract_decl = Forward().setName("abstract_decl")
     param_types = Forward().setName("param_types")
     function_decl_tail = OGroup(regparm, "regparm") +\
-                         Suppress(Literal('(')) + param_types("params") +\
+                         Suppress(Literal('(')) + Group(param_types)("params") +\
                          Suppress(Literal(')'))
     expression = Forward().setName("expression")
     array_decl_tail = Suppress(Literal('[')) + Group(expression)("dimension") +\
