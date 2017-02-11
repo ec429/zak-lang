@@ -79,9 +79,9 @@ class Parser(object):
     dir_abs_decl_tail = Alternate({'function': function_decl_tail,
                                     'array': array_decl_tail,
                                     })
-    dir_abs_decl = (OGroup(dir_abs_decl_primary, "primary") +
+    dir_abs_decl = (OGroup(dir_abs_decl_primary, "direct_decl") +
                     Group(OneOrMore(Group(dir_abs_decl_tail)))("tail")) |\
-                   Group(dir_abs_decl_primary)("primary")
+                   Group(dir_abs_decl_primary)("direct_decl")
     abstract_decl <<= (OGroup(pointer, "pointer") +
                        dir_abs_decl) |\
                       Group(pointer)("pointer")

@@ -44,21 +44,26 @@ class DeclIdentifier(object):
     def __str__(self):
         return str(self.typ)
 
-class Param(object):
-    def __init__(self, param):
-        self.typ = get_type(param['type'])
-        if self.typ is None:
-            raise UnhandledEntity(param)
-        self.decl_spec = DeclSpec(param, self.typ)
-    def __str__(self):
-        return str(self.decl_spec)
+def Param(param):
+    typ = get_type(param['type'])
+    if typ is None:
+        raise UnhandledEntity(param)
+    if param.get('decl_spec') is not None:
+        return DirectDecl(param['decl_spec'], typ)
+    if param.get('abstract_decl') is not None:
+        return DirectDecl(param['abstract_decl'], typ)
+    return DeclIdentifier(None, typ)
 
 class Function(object):
     def __init__(self, ftail, ret):
         self.ret = ret
         self.params = [Param(p) for p in ftail['params']]
     def __str__(self):
-        return 'function [%s -> %s]' % (', '.join(map(str, self.params)),
+        def pstr(p):
+            if p.ident is not None:
+                return '%s as %s'%(p.ident, p)
+            return str(p)
+        return 'function [%s -> %s]' % (', '.join(map(pstr, self.params)),
                                         self.ret)
 
 def DirectDecl(direct_decl, typ):
@@ -77,7 +82,7 @@ def DirectDecl(direct_decl, typ):
         if direct_decl.get('identifier') is not None:
             raise UnhandledEntity(direct_decl)
         return DirectDecl(direct_decl['direct_decl'], typ)
-    return DeclIdentifier(direct_decl['identifier'], typ)
+    return DeclIdentifier(direct_decl.get('identifier'), typ)
 
 class Pointer(object):
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
@@ -85,7 +90,7 @@ class Pointer(object):
         if pointer.get('qualifier_list') is not None:
             raise UnhandledEntity(pointer['qualifier_list'])
         if pointer.get('pointer') is not None:
-            raise UnhandledEntity(pointer.get('pointer'))
+            target = Pointer(pointer['pointer'], target)
         self.target = target
     def __str__(self):
         return 'Pointer(%s)'%(self.target,)
