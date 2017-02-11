@@ -31,7 +31,7 @@ class Parser(object):
     ty_pe = Forward().setName("type")
     object_decls = Forward()
     struct_decl = OGroup(qualifier_list, "qualifier_list") +\
-                  Group(ty_pe)("type") + Group(object_decls)("object_decls") +\
+                  Group(ty_pe)("type") + Group(object_decls)("declaration") +\
                   Suppress(Literal(';'))
     struct_body = Suppress(Literal('{')) +\
                   OneOrMore(Group(struct_decl)) +\

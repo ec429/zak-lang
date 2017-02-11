@@ -12,18 +12,32 @@ class UnhandledEntity(ASTError):
         return "%s\ncould not handle entity" % (self.entity.dump(),)
 
 class Type(object):
+    pass
+
+class PrimitiveType(Type):
     name = None
     def __str__(self):
         return self.name
-
-class Void(Type):
+class Void(PrimitiveType):
     name = 'void'
-class Bool(Type):
+class Bool(PrimitiveType):
     name = 'bool'
-class Byte(Type):
+class Byte(PrimitiveType):
     name = 'byte'
-class Word(Type):
+class Word(PrimitiveType):
     name = 'word'
+
+class Struct(Type):
+    def __init__(self, struct):
+        self.tag = struct['stag']
+        self.body = struct.get('body')
+        if self.body is not None:
+            self.body = [Declare(d) for d in self.body]
+    def __str__(self):
+        body = ''
+        if self.body is not None:
+            body = ' '.join(map(str, [' {'] + self.body + ['}']))
+        return 'struct %s%s' % (self.tag, body)
 
 def get_type(typ):
     if typ.get('void') is not None:
@@ -34,6 +48,8 @@ def get_type(typ):
         return Byte()
     if typ.get('word') is not None:
         return Word()
+    if typ.get('struct') is not None:
+        return Struct(typ['struct'])
 
 class StorageClass(object):
     def __init__(self, sc):
@@ -58,7 +74,7 @@ def Param(param):
         return DirectDecl(param['abstract_decl'], typ)
     return DeclIdentifier(None, typ)
 
-class Function(object):
+class Function(Type):
     def __init__(self, ftail, ret):
         self.ret = ret
         self.params = [Param(p) for p in ftail['params']]
@@ -88,7 +104,7 @@ def DirectDecl(direct_decl, typ):
         return DirectDecl(direct_decl['direct_decl'], typ)
     return DeclIdentifier(direct_decl.get('identifier'), typ)
 
-class Pointer(object):
+class Pointer(Type):
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
     def __init__(self, pointer, target):
         if pointer.get('qualifier_list') is not None:
@@ -141,6 +157,12 @@ class Identifier(object):
     def __str__(self):
         return self.ident
 
+class FlagIdent(object):
+    def __init__(self, expr):
+        self.flag = expr[0]
+    def __str__(self):
+        return '# %s' % (self.flag)
+
 def DoPrimary(expr):
     if expr.get('identifier') is not None:
         return Identifier(expr['identifier'])
@@ -149,7 +171,7 @@ def DoPrimary(expr):
     if expr.get('string_literal') is not None:
         raise UnhandledEntity(expr['string_literal'])
     if expr.get('flag_ident') is not None:
-        raise UnhandledEntity(expr['flag_ident'])
+        return FlagIdent(expr['flag_ident'])
     if expr.get('paren_expr') is not None:
         raise UnhandledEntity(expr['paren_expr'])
     raise UnhandledEntity(expr)
@@ -161,15 +183,25 @@ class PostcremExpr(object):
     def __str__(self):
         return 'PostcremExpr(%s %s)' % (self.target, self.op)
 
+class MemberExpr(object):
+    def __init__(self, expr, target):
+        self.op = expr['op']
+        self.tag = expr['tag']
+        self.target = target
+    def __str__(self):
+        return 'MemberExpr(%s %s %s)' % (self.target, self.op, self.tag)
+
 def PostfixExpr(expr, target):
     if expr.get('postcrem_tail') is not None:
         return PostcremExpr(expr['postcrem_tail'], target)
+    if expr.get('member_tail') is not None:
+        return MemberExpr(expr['member_tail'], target)
     raise UnhandledEntity(expr)
 
 def DoPostfix(expr):
     if expr.get('postfix_tail') is not None:
         target = DoPrimary(expr['primary_expr'])
-        for tail_part in reversed(expr['postfix_tail']):
+        for tail_part in expr['postfix_tail']:
             target = PostfixExpr(tail_part, target)
         return target
     return DoPrimary(expr)
@@ -318,7 +350,9 @@ class Declare(object):
         # <object-decls>  ::= <object-decl> (',' <object-decls>)?
         self.declarations = [Declaration(d, self.sc, self.typ) for d in declare['declaration']]
     def __str__(self):
-        return '\n'.join(['declare %s;'%(d,) for d in self.declarations])
+        if not self.declarations:
+            return 'mention %s;' % (self.typ,)
+        return ' '.join(['declare %s;'%(d,) for d in self.declarations])
 
 class ReturnStatement(object):
     def __init__(self, rs):
