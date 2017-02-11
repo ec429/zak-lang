@@ -154,16 +154,46 @@ def DoPrimary(expr):
         raise UnhandledEntity(expr['paren_expr'])
     raise UnhandledEntity(expr)
 
+class PostcremExpr(object):
+    def __init__(self, expr, target):
+        self.op = expr['op']
+        self.target = target
+    def __str__(self):
+        return 'PostcremExpr(%s %s)' % (self.target, self.op)
+
+def PostfixExpr(expr, target):
+    if expr.get('postcrem_tail') is not None:
+        return PostcremExpr(expr['postcrem_tail'], target)
+    raise UnhandledEntity(expr)
+
 def DoPostfix(expr):
     if expr.get('postfix_tail') is not None:
-        raise UnhandledEntity(expr['postfix_tail'])
+        target = DoPrimary(expr['primary_expr'])
+        for tail_part in reversed(expr['postfix_tail']):
+            target = PostfixExpr(tail_part, target)
+        return target
     return DoPrimary(expr)
+
+class UnaryExpr(object):
+    # <unary-op> <cast-expr>
+    def __init__(self, expr):
+        self.op = expr['op']
+        self.arg = DoCast(expr['arg'])
+    def __str__(self):
+        return 'UnaryExpr(%s %s)'%(self.op, self.arg)
+
+class PrecremExpr(object):
+    def __init__(self, expr):
+        self.op = expr['op']
+        self.arg = DoUnary(expr['arg'])
+    def __str__(self):
+        return 'PrecremExpr(%s %s)' % (self.op, self.arg)
 
 def DoUnary(expr):
     if expr.get('precrem_expr') is not None:
-        raise UnhandledEntity(expr['precrem_expr'])
+        return PrecremExpr(expr['precrem_expr'])
     if expr.get('unary_expr') is not None:
-        raise UnhandledEntity(expr['unary_expr'])
+        return UnaryExpr(expr['unary_expr'])
     if expr.get('sizeof_expr') is not None:
         raise UnhandledEntity(expr['sizeof_expr'])
     return DoPostfix(expr);
@@ -306,11 +336,19 @@ class ExpressionStatement(object):
     def __str__(self):
         return str(self.expr) + ';'
 
+class LabelStatement(object):
+    def __init__(self, ls):
+        self.label = ls['label'][0]
+    def __str__(self):
+        return self.label + ':'
+
 def Statement(stmt):
     if stmt.get('return_stmt') is not None:
         return ReturnStatement(stmt['return_stmt'])
     if stmt.get('expr_stmt') is not None:
         return ExpressionStatement(stmt['expr_stmt'])
+    if stmt.get('label_stmt') is not None:
+        return LabelStatement(stmt['label_stmt'])
     raise UnhandledEntity(stmt)
 
 class BlockStatement(object):

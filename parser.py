@@ -206,7 +206,7 @@ class Parser(object):
                   Group(sizeof_arg)("arg") + Suppress(Literal(')'))
     unary_expr <<= Alternate2(postfix_expr,
                               {'precrem_expr': precrem_expr,
-                               'unary_expr': Group(unary_op)("op") +
+                               'unary_expr': unary_op("op") +
                                              Group(cast_expr)("arg"),
                                'sizeof_expr': sizeof_expr,
                                })
