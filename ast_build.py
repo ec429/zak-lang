@@ -133,14 +133,18 @@ class DeclSpec(object):
     def __str__(self):
         return '%s as %s'%(self.ident, self.object)
 
-def IntConst(expr):
-    if expr.get('dec') is not None:
-        return int(expr['dec'][0], 10)
-    if expr.get('hex') is not None:
-        return int(expr['hex'][0], 16)
-    if expr.get('oct') is not None:
-        return int(expr['oct'][0], 8)
-    raise UnhandledEntity(expr)
+class IntConst(object):
+    def __init__(self, expr):
+        if expr.get('dec') is not None:
+            self.value = int(expr['dec'][0], 10)
+        elif expr.get('hex') is not None:
+            self.value = int(expr['hex'][0], 16)
+        elif expr.get('oct') is not None:
+            self.value = int(expr['oct'][0], 8)
+        else:
+            raise UnhandledEntity(expr)
+    def __str__(self):
+        return str(self.value)
 
 def Constant(expr):
     if expr.get('int_const') is not None:
@@ -150,6 +154,12 @@ def Constant(expr):
     if expr.get('char_const') is not None:
         raise UnhandledEntity(expr['char_const'])
     raise UnhandledEntity(expr)
+
+class StringLiteral(object):
+    def __init__(self, expr):
+        self.text = expr[0]
+    def __str__(self):
+        return repr(self.text)
 
 class Identifier(object):
     def __init__(self, ident):
@@ -169,7 +179,7 @@ def DoPrimary(expr):
     if expr.get('constant') is not None:
         return Constant(expr['constant'])
     if expr.get('string_literal') is not None:
-        raise UnhandledEntity(expr['string_literal'])
+        return StringLiteral(expr['string_literal'])
     if expr.get('flag_ident') is not None:
         return FlagIdent(expr['flag_ident'])
     if expr.get('paren_expr') is not None:
