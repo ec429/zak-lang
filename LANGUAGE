@@ -36,7 +36,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <enum-body>	::= '{' <enum-defns> ','? '}'
 <enum-defns>	::= <enum-defn> (',' <enum-defns>)?
 <enum-defn>	::= <enum-const> ('=' <expression>)?
-<object-decl>	::= <decl-spec> <initialiser>
+<object-decl>	::= <decl-spec> ('=' <initialiser>)?
 <decl-spec>	::= <pointer>? <direct-decl>
 <pointer>	::= '*' <qualifier-list>? <pointer>?
 <direct-decl>	::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
@@ -54,7 +54,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <abs-arr-decl>	::= <dir-abs-decl>? '[' <expression> ']'
 <abs-func-decl>	::= <dir-abs-decl>? <regparm>? '(' <param-types> ')'
 <type-name>	::= <type> <abstract-decl>
-<initialiser>	::= '=' (<assign-expr> | '{' <init-list> ','? '}')
+<initialiser>	::= <assign-expr> | '{' <init-list> ','? '}'
 <init-list>	::= (<init-list> ',')? <designation>? <initialiser>
 <designation>	::= <desigtor-list> '='
 <desigtor-list>	::= <desigtor-list? <designator>

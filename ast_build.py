@@ -316,14 +316,50 @@ def DoExpression(expr):
         raise UnhandledEntity(expr['do_comma'])
     return DoAssign(expr)
 
+class MemberDesignator(object):
+    def __init__(self, d):
+        self.tag = d['tag']
+    def __str__(self):
+        return '.%s' % (self.tag,)
+
+def Designator(d):
+    if d.get('member') is not None:
+        return MemberDesignator(d['member'])
+    if d.get('array') is not None:
+        raise UnhandledEntity(d['array'])
+    raise UnhandledEntity(d)
+
+class Designation(object):
+    def __init__(self, dlist):
+        self.list = [Designator(d) for d in dlist]
+    def __str__(self):
+        return ''.join(map(str, self.list))
+
+class DesignatedInitialiser(object):
+    def __init__(self, di):
+        self.d = di.get('designation')
+        if self.d is not None:
+            self.d = Designation(self.d)
+        self.i = Initialiser(di['initialiser'])
+    def __str__(self):
+        if self.d is not None:
+            return '%s = %s' % (self.d, self.i)
+        return str(self.i)
+
+class InitList(object):
+    def __init__(self, ilist):
+        self.list = [DesignatedInitialiser(di) for di in ilist]
+    def __str__(self):
+        return ', '.join(map(str, self.list))
+
 def Initialiser(init):
-    # '=' (<expression> | '{' <init-list> ','? '}')
+    # <initialiser>   ::= <expression> | '{' <init-list> ','? '}'
     if init.get('init_list') is not None:
-        raise UnhandledEntity(init['init_list'])
+        return InitList(init['init_list'])
     return DoAssign(init)
 
 class Declaration(object):
-    # <object-decl>   ::= <decl-spec> <initialiser>
+    # <object-decl>   ::= <decl-spec> ('=' <initialiser>)?
     def __init__(self, declaration, sc, typ):
         self.sc = sc
         self.decl_spec = DeclSpec(declaration['decl_spec'], typ)
