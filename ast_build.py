@@ -201,7 +201,18 @@ class MemberExpr(object):
     def __str__(self):
         return 'MemberExpr(%s %s %s)' % (self.target, self.op, self.tag)
 
+class FuncallExpr(object):
+    def __init__(self, expr, target):
+        self.args = [DoAssign(a) for a in expr['arg_list']]
+        self.target = target
+    def __str__(self):
+        return 'FuncallExpr(%s)' % (' '.join(map(str, [self.target] + self.args)),)
+
 def PostfixExpr(expr, target):
+    if expr.get('subscript_tail') is not None:
+        raise UnhandledEntity(expr['subscript_tail'])
+    if expr.get('funcall_tail') is not None:
+        return FuncallExpr(expr['funcall_tail'], target)
     if expr.get('postcrem_tail') is not None:
         return PostcremExpr(expr['postcrem_tail'], target)
     if expr.get('member_tail') is not None:
