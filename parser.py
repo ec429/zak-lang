@@ -38,9 +38,9 @@ class Parser(object):
                   Suppress(Literal('}'))
     struct = Suppress(Keyword('struct')) + identifier("stag") +\
              OGroup(struct_body, "body")
-    enum_const = (Suppress(Literal('$')) + identifier)
+    enum_const = (Suppress(Literal('$')) + identifier("name"))
     assign_expr = Forward().setName("assign_expr")
-    enum_defn = Group(enum_const)("name") +\
+    enum_defn = enum_const +\
                 Optional(Suppress(Literal('=')) + Group(assign_expr)("value"))
     enum_body = Suppress(Literal('{')) + delimitedList(Group(enum_defn)) +\
                 Suppress(Optional(Literal(','))) + Suppress(Literal('}'))

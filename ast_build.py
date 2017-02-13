@@ -39,6 +39,29 @@ class Struct(Type):
             body = ' '.join(map(str, [' {'] + self.body + ['}']))
         return 'struct %s%s' % (self.tag, body)
 
+class EnumValue(object):
+    def __init__(self, ev):
+        self.name = ev['name']
+        self.value = ev.get('value')
+        if self.value is not None:
+            self.value = DoAssign(self.value)
+    def __str__(self):
+        if self.value is None:
+            return '$%s' % (self.name,)
+        return '$%s = %s' % (self.name, self.value)
+
+class Enum(Type):
+    def __init__(self, enum):
+        self.tag = enum['etag']
+        self.body = enum.get('body')
+        if self.body is not None:
+            self.body = [EnumValue(e) for e in self.body]
+    def __str__(self):
+        body = ''
+        if self.body is not None:
+            body = ' {%s}' % (', '.join(map(str, self.body)),)
+        return 'enum %s%s' % (self.tag, body)
+
 def get_type(typ):
     if typ.get('void') is not None:
         return Void()
@@ -50,6 +73,8 @@ def get_type(typ):
         return Word()
     if typ.get('struct') is not None:
         return Struct(typ['struct'])
+    if typ.get('enum') is not None:
+        return Enum(typ['enum'])
 
 class StorageClass(object):
     def __init__(self, sc):
