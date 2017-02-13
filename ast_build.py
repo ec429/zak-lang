@@ -111,6 +111,13 @@ class Function(Type):
         return 'function [%s -> %s]' % (', '.join(map(pstr, self.params)),
                                         self.ret)
 
+class Array(Type):
+    def __init__(self, atail, etyp):
+        self.type = etyp
+        self.dim = DoExpression(atail['dimension'])
+    def __str__(self):
+        return 'array [%s] of %s' % (self.dim, self.type)
+
 def DirectDecl(direct_decl, typ):
     # <direct-decl>   ::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
     tail = direct_decl.get('tail')
@@ -119,7 +126,7 @@ def DirectDecl(direct_decl, typ):
             if tail_part.get('function') is not None:
                 typ = Function(tail_part['function'], typ)
             if tail_part.get('array') is not None:
-                raise UnhandledEntity(tail_part['array'])
+                typ = Array(tail_part['array'], typ)
     pointer = direct_decl.get('pointer')
     if pointer is not None:
         typ = Pointer(pointer, typ)
