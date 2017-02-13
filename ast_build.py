@@ -378,11 +378,17 @@ class MemberDesignator(object):
     def __str__(self):
         return '.%s' % (self.tag,)
 
+class SubscriptDesignator(object):
+    def __init__(self, d):
+        self.subscript = DoExpression(d['subscript'])
+    def __str__(self):
+        return '[%s]' % (self.subscript,)
+
 def Designator(d):
     if d.get('member') is not None:
         return MemberDesignator(d['member'])
     if d.get('array') is not None:
-        raise UnhandledEntity(d['array'])
+        return SubscriptDesignator(d['array'])
     raise UnhandledEntity(d)
 
 class Designation(object):
