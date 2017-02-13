@@ -178,11 +178,17 @@ class IntConst(object):
     def __str__(self):
         return str(self.value)
 
+class EnumConst(object):
+    def __init__(self, expr):
+        self.name = expr['name']
+    def __str__(self):
+        return '$%s' % (self.name,)
+
 def Constant(expr):
     if expr.get('int_const') is not None:
         return IntConst(expr['int_const'])
     if expr.get('enum_const') is not None:
-        raise UnhandledEntity(expr['enum_const'])
+        return EnumConst(expr['enum_const'])
     if expr.get('char_const') is not None:
         raise UnhandledEntity(expr['char_const'])
     raise UnhandledEntity(expr)
