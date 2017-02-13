@@ -240,9 +240,16 @@ class FuncallExpr(object):
     def __str__(self):
         return 'FuncallExpr(%s)' % (' '.join(map(str, [self.target] + self.args)),)
 
+class SubscriptExpr(object):
+    def __init__(self, expr, target):
+        self.subscript = DoExpression(expr['subscript'])
+        self.target = target
+    def __str__(self):
+        return 'SubscriptExpr(%s %s)' % (self.target, self.subscript)
+
 def PostfixExpr(expr, target):
     if expr.get('subscript_tail') is not None:
-        raise UnhandledEntity(expr['subscript_tail'])
+        return SubscriptExpr(expr['subscript_tail'], target)
     if expr.get('funcall_tail') is not None:
         return FuncallExpr(expr['funcall_tail'], target)
     if expr.get('postcrem_tail') is not None:
