@@ -1,11 +1,10 @@
 ideas for zak (Z80 Abstractions for Kernels) language
 
+PLEASE NOTE!  This was/is a scratch file for working out ideas.  The actual definition of the zak language belongs in the file 'LANGUAGE'.
+For things which that file does not specify, _this_ file contains descriptions of plans, limits of the current implementation, and limits of older versions of the implementation.  Don't trust it...
+
 data types: void, bool, byte, word, pointer, struct, union?, enum?, array
 use IY for variable stack (totally separate to the SP push/pop/call/ret stack)
-initially, just a mechanism for linkage, local-variable allocation and type-safety
-i.e. ops are things like foo += bar; if (#C) {baz--; ret;}
-so no expression evaluation, just the operations that map naturally onto Z80 opcodes
-of course, sometimes that will still require some cleverness, but hopefully it'll be minimal
 will need a macroexpansion facility
 would be nice to have inline functions for things like 32-bit arithmetic (and even 16-bit multiplies etc)
 
@@ -17,16 +16,16 @@ initially, make no attempt to do optimisation in the compiler beyond 'sane code 
 calling conventions:
 * anything but SP (and R, I suppose) is callee-clobbered
 * return value location:
-	may be specified as part of function signature ("word __DE get_dest(void);"), else following defaults:
+	may be specified as part of function signature ("word get_dest __DE (void);"), else following defaults:
 	- bool, byte, enum: A
 	- word, pointer: HL
 	- struct, union: caller-stack, compiler passes pointer as extra argument.  Initial version might not do this for you (i.e. entirely reject functions returning struct)
 	- array: forbidden
 * argument locations:
-	may be specified as part of function signature ("byte do_something(word __BC src, word __DE dst);") *for extern functions only* (i.e. it's to make life easier for asm callees, which don't even have to know they're being called from zak!)
+	may be specified as part of function signature ("byte do_something(word __BC src, word __DE dst);").  It's there to make life easier for asm callees, which don't even have to know they're being called from zak; but zak functions can do it too (though probably shouldn't).
 	otherwise, everything is passed on the stack
-	stack size per function is restricted to 255 bytes, so big structs or arrays on stack hurt!
-	if you try to pass an array to a function, it's passed by reference (i.e. it degrades to a pointer).  A function *must not* have a formal parameter of array type, nor of struct type (stick to pointers)
+	stack size per function is restricted to 128 bytes, so big structs or arrays on stack hurt!  (Struct sizes - even structs that only ever appear as pointers - are also restricted to 128 bytes, and for the same reason: the maximum positive displacement of an indexed load is +127.)
+	if you try to pass an array to a function, it's passed by reference (i.e. it degrades to a pointer).  A function *must not* have a formal parameter of array type, nor of struct type (stick to pointers).  Though, we might add support for struct parameters later.
 
 Caller constructs the initial stack frame.  It starts with 'byte frame_len;', which is used only for debugging purposes, but _always_ present
 frame_len does not include itself in the length.  IY points to the byte _after_ frame_len.
@@ -36,46 +35,7 @@ Callee then extends this stack frame to make room for its local variables; it mo
 On return, callee simply RETs, and caller does POP IY to get its own stack pointer back
 Caller might then decide to extend its stack frame further, overwriting the stale callee stack frame.  This might be done to minimise total stack usage (eg. we put something big on the stack after the last call), but relies on the compiler KNOWING the flow of control and that there's no way we can end up having overlapping liveness, which is probably more optimisation than a first version needs.
 
-for our first version, we don't include array support (but that will be needed _fairly_ soon after)
-
 Beware! (differences from C):
 * The assign-ish operators return _the value written_, not the contents of the variable written to.  Because that's waaay easier to implement.
-* Struct definitions can only appear at file scope, not in functions, nor inside other structs.
-  So instead of "struct foo { struct bar { word x; } bar; };", write "struct bar { word x; }; struct foo { struct bar bar; };".
-
-Parsing notes:
-
-In file scope we allow:
-	[storage] type [data [= initialiser] [, data [= initialiser] [...]]]; // global variable declarations, including function declaration without definition
-	[storage] type function ( argument-list ) { local-variables function-body } // function definition
-where 'type' can be a builtin type or 'struct tag [{ declaration-list }]'
-where 'data' can be derived (e.g. *data to make it a pointer; data(argument-list) making it a function declaration, or even (*data)(argument-or-type-list) making it a function pointer)
-where 'storage' is one of:
-	auto
-	static
-	extern
-where the rump form '[storage] type;' is only sensible if type is a struct, but there's no need to forbid it otherwise
-
-In an argument-list we allow:
-	type name [, type name [...]]
-where, again, name can be derived.  In an argument-or-type-list, each 'name' is optional.
-
-In local-variables we allow:
-	[storage] type data [= initialiser] [, data [= initialiser] [...]]; // local variable declarations
-where 'data' can be derived but must not be a function declaration (though it may be a function pointer).
-
-In a function-body we allow:
-	[identifier assign-ish] expression;
-
-A declarator (a.k.a. derived identifier) is one of:
-	identifier
-	( declarator )
-	* declarator
-	declarator ( argument-or-type-list )
-	qualifier declarator
-
-A qualifier is one of:
-	const
-
-List of all keywords:
-auto static extern const return struct void bool byte word if goto
+* The precedence and associativity of binary operators are different.  See LANGUAGE for details.
+* A function with no parameters is declared as "func()", not "func(void)".

@@ -203,7 +203,7 @@ Restrictions on Names
 ---------------------
 An identifier with external linkage shall not match (case-insensitively) any of
  the following:
-A, B, C, D, E, F, H, L, I, R, IXH, IXL, IYH, IYL, AF, BC, DE, HL, IX, IY
+A, B, C, D, E, F, H, L, I, R, IXH, IXL, IYH, IYL, AF, BC, DE, HL, IX, IY, SP
 Rationale: these alias to register names in the generated assembly, and the
  assembler gets unhappy.  A future version of the language might use a mangling
  technique to allow their use.
