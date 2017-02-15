@@ -939,7 +939,7 @@ class Allocator(object):
             self.stack[name] = [self.sp, typ, size, True, True]
             self.names[name] = (AST.Auto, typ)
             self.sp += size
-            if self.sp > 127:
+            if self.sp > 128:
                 raise AllocError("No room on stack for param", name, typ, size)
         self.caller_stack_size = self.sp
     def prepare_locals(self):
@@ -959,7 +959,7 @@ class Allocator(object):
             if filled and spilled and sp is None:
                 self.stack[name] = [self.sp, typ, size, filled, spilled]
                 self.sp += size
-                if self.sp > 127:
+                if self.sp > 128:
                     raise AllocError("No room on stack for local", name, t.typ, size)
     def allocate_globals(self):
         for t in self.func:
