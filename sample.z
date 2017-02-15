@@ -78,7 +78,7 @@ extern void puts(byte *);
 
 byte *text = "Nope.";
 
-byte main(void)
+/*byte main(void)
 {
 	byte *hello = "Hello sailor";
 	struct u32 bar_count = {.lo = 5};
@@ -90,4 +90,4 @@ byte main(void)
 	strcpy(offset, "world!");
 	puts(hello);
 	return 0;
-}
+}*/

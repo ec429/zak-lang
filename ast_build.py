@@ -9,23 +9,41 @@ class UnhandledEntity(ASTError):
     def __init__(self, entity):
         self.entity = entity
     def __str__(self):
-        return "%s\ncould not handle entity" % (self.entity.dump(),)
+        if isinstance(self.entity, parser.ParseResults):
+            dump = self.entity.dump()
+        else:
+            dump = pprint.pformat(self.entity)
+        return '\n'.join((dump, "could not handle entity"))
 
 class Type(object):
-    pass
+    def compat(self, other):
+        return NotImplemented
+    @classmethod
+    def make(cls, *args):
+        raise NotImplementedError()
 
 class PrimitiveType(Type):
     name = None
     def __str__(self):
         return self.name
+    def compat(self, other):
+        return isinstance(other, PrimitiveType) and self.name == other.name
 class Void(PrimitiveType):
     name = 'void'
 class Bool(PrimitiveType):
     name = 'bool'
 class Byte(PrimitiveType):
     name = 'byte'
+    @classmethod
+    def make(cls, val):
+        return IntConst({'dec': str(val)})
 class Word(PrimitiveType):
     name = 'word'
+    def compat(self, other):
+        return isinstance(other, (Byte, Word))
+    @classmethod
+    def make(cls, val):
+        return IntConst({'dec': str(val), 'long': True})
 
 class Struct(Type):
     def __init__(self, struct):
@@ -38,6 +56,8 @@ class Struct(Type):
         if self.body is not None:
             body = ' '.join(map(str, [' {'] + self.body + ['}']))
         return 'struct %s%s' % (self.tag, body)
+    def compat(self, other):
+        return isinstance(other, Struct) and self.tag == other.tag
 
 class EnumValue(object):
     def __init__(self, ev):
@@ -61,6 +81,8 @@ class Enum(Type):
         if self.body is not None:
             body = ' {%s}' % (', '.join(map(str, self.body)),)
         return 'enum %s%s' % (self.tag, body)
+    def compat(self, other):
+        return isinstance(other, Enum) and self.tag == other.tag
 
 def get_type(typ):
     if typ.get('void') is not None:
@@ -79,6 +101,15 @@ def get_type(typ):
 class StorageClass(object):
     def __init__(self, sc):
         self.sc = sc
+    @property
+    def auto(self):
+        return self.sc == 'auto'
+    @property
+    def extern(self):
+        return self.sc == 'extern'
+    @property
+    def static(self):
+        return self.sc == 'static'
     def __str__(self):
         return self.sc
 
@@ -117,6 +148,9 @@ class Array(Type):
         self.dim = DoExpression(atail['dimension'])
     def __str__(self):
         return 'array [%s] of %s' % (self.dim, self.type)
+    @classmethod
+    def make(cls, etyp, dim):
+        return cls({'dimension': make_int_const_expr(dim)}, etyp)
 
 def DirectDecl(direct_decl, typ):
     # <direct-decl>   ::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
@@ -139,13 +173,18 @@ def DirectDecl(direct_decl, typ):
 class Pointer(Type):
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
     def __init__(self, pointer, target):
-        if pointer.get('qualifier_list') is not None:
-            raise UnhandledEntity(pointer['qualifier_list'])
+        self.qualifiers = pointer.get('qualifier_list', {}).keys()
         if pointer.get('pointer') is not None:
             target = Pointer(pointer['pointer'], target)
         self.target = target
     def __str__(self):
         return 'Pointer(%s)'%(self.target,)
+    @classmethod
+    def make(cls, pointee, *qualifiers):
+        d = {}
+        if qualifiers:
+            d['qualifier_list'] = {k: [] for k in qualifiers}
+        return cls(d, pointee)
 
 class DeclSpec(object):
     def __init__(self, decl_spec, typ):
@@ -165,6 +204,13 @@ class DeclSpec(object):
     def __str__(self):
         return '%s as %s'%(self.ident, self.object)
 
+def make_int_const_expr(val):
+    return {'constant':
+                {'int_const':
+                    {'dec': '%d' % (val,)}
+                }
+            }
+
 class IntConst(object):
     def __init__(self, expr):
         if expr.get('dec') is not None:
@@ -175,8 +221,9 @@ class IntConst(object):
             self.value = int(expr['oct'][0], 8)
         else:
             raise UnhandledEntity(expr)
+        self.long = expr.get('long') is not None
     def __str__(self):
-        return str(self.value)
+        return str(self.value) + ('l' if self.long else '')
 
 class EnumConst(object):
     def __init__(self, expr):
@@ -551,6 +598,8 @@ class FunctionDefn(object):
         if self.typ is None:
             raise UnhandledEntity(defn['type'])
         self.decl_spec = DeclSpec(defn['decl_spec'], self.typ)
+        if not isinstance(self.decl_spec.object.typ, Function):
+            raise ASTError("FunctionDefn has type", self.decl_spec.object.typ)
         self.body = BlockStatement(defn)
     def __str__(self):
         s = str(self.decl_spec)
@@ -561,17 +610,13 @@ class FunctionDefn(object):
 class AST_builder(object):
     def __init__(self, parse_tree):
         self.decls = []
-        try:
-            for entity in parse_tree:
-                if entity.get('declare'):
-                    self.decls.append(Declare(entity['declare']))
-                elif entity.get('function_defn'):
-                    self.decls.append(FunctionDefn(entity['function_defn']))
-                else:
-                    raise UnhandledEntity(entity)
-        finally:
-            for decl in self.decls:
-                print decl
+        for entity in parse_tree:
+            if entity.get('declare'):
+                self.decls.append(Declare(entity['declare']))
+            elif entity.get('function_defn'):
+                self.decls.append(FunctionDefn(entity['function_defn']))
+            else:
+                raise UnhandledEntity(entity)
 
 ## Test code
 
@@ -586,3 +631,5 @@ if __name__ == "__main__":
     pprint.pprint(parse_tree)
     print
     ast = AST_builder(parse_tree)
+    for decl in ast.decls:
+        print decl
