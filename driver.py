@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import optparse, pprint, sys
-import parser, tacifier, allocator, codegen
+import parser, ast_build, tacifier, allocator, codegen
 
 def parse_args():
     x = optparse.OptionParser()
@@ -24,10 +24,17 @@ if __name__ == "__main__":
     parse_tree = parser.parse(source)
     if opts.debug:
         print "Parse globals:"
-        pprint.pprint(parse_tree.globals)
+        print parse_tree.dump()
+        print
+    if opts.debug: print "-AST/BUILD-"
+    ast = ast_build.AST_builder(parse_tree)
+    if opts.debug:
+        print "Syntax tree"
+        for decl in ast.decls:
+            print decl
         print
     if opts.debug: print "-TACIFY-"
-    tac = tacifier.tacify(parse_tree)
+    tac = tacifier.tacify(ast)
     if opts.debug:
         print "TAC functions:"
         pprint.pprint(tac.functions)
@@ -35,20 +42,7 @@ if __name__ == "__main__":
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
     if opts.debug: print "-ALLOC/RTL-"
-    allocations = allocator.alloc(parse_tree, tac)
-    if opts.debug:
-        print "RTL functions:"
-        for name, rtl in allocations.items():
-            print rtl.sc, name
-            print rtl.stack
-            pprint.pprint(rtl.code)
-            print
-        print "Structs:"
-        for tag, struc in allocations[None].structs.items():
-            print "  struct", tag
-            for off, typ, memb, size in struc.members:
-                print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
-        print
+    allocations = allocator.alloc(tac, debug=opts.debug)
     if opts.debug: print "-CODE/GEN-"
     gen = codegen.generate(allocations)
     if opts.debug:
