@@ -1,9 +1,7 @@
 #!/usr/bin/python
 
 import sys, pprint, string
-import parser, tacifier, allocator
-LEX = parser.Lexer
-PAR = parser.Parser
+import ast_build as AST, tacifier, allocator
 TAC = tacifier.TACifier
 REG = allocator.Register
 RTL = allocator.Allocator
@@ -54,11 +52,10 @@ class FunctionGenerator(Generator):
                     self.text.append("\tLD %s,(IY+%d)"%(op.reg.hi, offset+1))
                 else: # can't happen
                     raise GenError(size)
-            elif isinstance(op.name, PAR.Literal):
+            elif isinstance(op.name, AST.IntConst):
                 # if it's a word register, it auto-promotes the literal
+                assert op.reg.size <= op.name.size, op
                 self.text.append("\tLD %s,%d"%(op.reg, op.name.value))
-            elif isinstance(op.name, PAR.LongLiteral):
-                raise NotImplementedError(op)
             else:
                 if op.reg.name == 'A':
                     name = self.staticname(op.name)
@@ -110,6 +107,17 @@ class FunctionGenerator(Generator):
                 self.text.append("\tLD (%s),%s"%(op.dst, op.src))
             else:
                 raise NotImplementedError(op.src.size)
+        elif isinstance(op, RTL.RTLIndirectRead):
+            assert isinstance(op.src, REG), op
+            assert isinstance(op.dst, REG), op
+            assert op.src.size == 2, op
+            if op.dst.size == 1:
+                self.text.append("\tLD %s,(%s%+d)"%(op.dst, op.src, op.offset))
+            elif op.dst.size == 2:
+                self.text.append("\tLD %s,(%s%+d)"%(op.dst.lo, op.src, op.offset))
+                self.text.append("\tLD %s,(%s%+d)"%(op.dst.hi, op.src, op.offset + 1))
+            else:
+                raise GenError(op.dst.size)
         elif isinstance(op, RTL.RTLIndirectWrite):
             assert isinstance(op.dst, REG), op
             assert op.dst.size == 2, op
@@ -139,11 +147,15 @@ class FunctionGenerator(Generator):
             elif isinstance(op.src, TAC.Gensym):
                 # we assume it's a global one, and thus its name exists
                 self.text.append("\tLD %s,%s"%(op.dst, self.staticname(op.src)))
-            elif isinstance(op.src, PAR.Literal):
-                assert op.dst.size == 1, op
+            elif isinstance(op.src, AST.IntConst):
+                assert op.dst.size <= op.src.size, op
                 self.text.append("\tLD %s,%d"%(op.dst, op.src.value))
             else:
                 raise NotImplementedError(op.src)
+        elif isinstance(op, RTL.RTLExchange):
+            assert isinstance(op.dst, REG), op
+            assert isinstance(op.src, REG), op
+            self.text.append("\tEX %s,%s"%(op.dst, op.src))
         elif isinstance(op, RTL.RTLAdd):
             assert isinstance(op.dst, REG), op
             if isinstance(op.src, REG):
@@ -157,19 +169,12 @@ class FunctionGenerator(Generator):
                     self.text.append("\tADD %s,%s"%(op.dst, op.src))
                 else:
                     raise NotImplementedError(op)
-            elif isinstance(op.src, PAR.Literal):
-                assert op.dst.size == 1, op
+            elif isinstance(op.src, AST.IntConst):
+                assert op.dst.size == op.src.size, op
                 if op.src.value == 1:
                     self.text.append("\tINC %s"%(op.dst,))
                 else:
                     raise NotImplementedError(op)
-            elif isinstance(op.src, PAR.LongLiteral):
-                if op.src.value == 1:
-                    self.text.append("\tINC %s"%(op.dst,))
-                elif op.src.value == -1:
-                    raise NotImplementedError(op)
-                else:
-                    raise GenError("16-bit literal add", op)
             else:
                 raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLCp):
@@ -197,16 +202,16 @@ class FunctionGenerator(Generator):
             assert isinstance(op.dst, REG), op
             self.text.append("\tPOP %s"%(op.dst,))
         elif isinstance(op, RTL.RTLLabel):
-            assert isinstance(op.name, LEX.Identifier), op
+            assert isinstance(op.name, str), op
             self.text.append("%s:"%(op.name,))
         elif isinstance(op, RTL.RTLCall):
             assert isinstance(op.addr, str), op
             self.text.append("\tCALL %s"%(op.addr,))
         elif isinstance(op, RTL.RTLJump): # TODO notice when we need to use long JP (but how?)
-            assert isinstance(op.label, LEX.Identifier), op
+            assert isinstance(op.label, str), op
             self.text.append("\tJR %s"%(op.label))
         elif isinstance(op, RTL.RTLCJump): # TODO notice when we need to use long JP (but how?)
-            assert isinstance(op.label, LEX.Identifier), op
+            assert isinstance(op.label, str), op
             assert isinstance(op.flag, Flag)
             self.text.append("\tJR %s,%s"%(op.flag.name, op.label))
         else:
@@ -219,9 +224,9 @@ class FunctionGenerator(Generator):
                 self.err(self.rtl.tac.strings)
                 raise NotImplementedError(name, size, typ)
         self.text.append("")
-        if isinstance(self.rtl.sc, LEX.Auto):
+        if self.rtl.sc.auto:
             self.text.append(".globl %s ; %s"%(self.name, self.rtl.decl))
-        elif isinstance(self.rtl.sc, LEX.Static):
+        elif self.rtl.sc.static:
             self.text.append("; (static) %s"%(self.rtl.decl,))
         else:
             raise GenError("Unexplained storage class", self.rtl.sc)
@@ -256,11 +261,15 @@ class FunctionGenerator(Generator):
 
 class GlobalGenerator(Generator):
     def generate(self):
+        things = {}
         for name, (_, typ, size, filled, spilled) in self.rtl.stack.items():
             if not filled and spilled: # can't happen
                 raise GenError("Global is not memory-backed", name)
             if name not in self.rtl.inits: # can't happen
                 raise GenError("Undeclared global", name)
+            things[name] = (size, typ)
+        things.update(self.rtl.static)
+        for name, (size, typ) in things.items():
             init = self.rtl.inits[name]
             name = self.staticname(name)
             if init is None:
@@ -269,14 +278,22 @@ class GlobalGenerator(Generator):
             else:
                 self.data.append(".globl %s ; %s"%(name,typ))
                 self.data.append("%s:"%(name,))
-                if isinstance(init, PAR.Literal):
-                    if typ != PAR.ValueOfType('byte'):
+                if isinstance(init, AST.IntConst):
+                    if not typ.compat(init.typ):
                         raise GenError("Literal", init, "doesn't match type", typ, "of", name)
-                    self.data.append("\t.byte %d"%(init.value,))
-                elif isinstance(init, PAR.LongLiteral):
-                    if typ != PAR.ValueOfType('word'):
-                        raise GenError("Literal", init, "doesn't match type", typ, "of", name)
-                    self.data.append("\t.word %d"%(init.value,))
+                    if size == 1:
+                        self.data.append("\t.byte %d"%(init.value,))
+                    elif size == 2:
+                        self.data.append("\t.word %d"%(init.value,))
+                    else:
+                        raise GenError("Bad size", size, "for name", name, "with literal initialiser", init)
+                elif isinstance(init, TAC.TACAddress):
+                    self.data.append("\t.word %s"%(self.staticname(init.src),))
+                elif isinstance(init, str):
+                    # Don't trust .asciz, it can't cope with special chars like \n
+                    self.data.append("\t; %r"%(init,))
+                    self.data.append('\t.byte %s'%(', '.join(('%d'%(ord(ch),) for ch in init))))
+                    self.data.append('\t.byte 0')
                 else:
                     raise NotImplementedError(init)
 
@@ -308,28 +325,18 @@ def combine(generated):
 ## Test code
 
 if __name__ == "__main__":
+    import parser
     if len(sys.argv) > 1:
         with open(sys.argv[1], 'r') as f:
             source = f.read()
     else:
         source = sys.stdin.read()
     parse_tree = parser.parse(source)
-    print "Parse globals:"
-    pprint.pprint(parse_tree.globals)
-    print
-    tac = tacifier.tacify(parse_tree)
-    print "TAC functions:"
-    pprint.pprint(tac.functions)
+    ast = AST.AST_builder(parse_tree)
+    tac = tacifier.tacify(ast)
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
-    print
-    allocations = allocator.alloc(parse_tree, tac)
-    print "RTL functions:"
-    for name, rtl in allocations.items():
-        print rtl.sc, name
-        print rtl.stack
-        print rtl.code
-        print
+    allocations = allocator.alloc(tac, debug=True)
     print
     generated = {}
     for name, rtl in allocations.items():

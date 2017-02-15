@@ -235,6 +235,7 @@ class IntConst(object):
             raise UnhandledEntity(expr)
         self.long = expr.get('long') is not None
         self.typ = Word() if self.long else Byte()
+        self.size = self.typ.fixed_size
     def __str__(self):
         return str(self.value) + ('l' if self.long else '')
 

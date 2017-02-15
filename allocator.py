@@ -465,7 +465,7 @@ class Allocator(object):
         if ix.user != name:
             if not ix.available: # don't bother trying to move, just spill it
                 self.spill(ix)
-            r = self.reg_find_word(name)
+            r = self.fetch_src_word(name)
             if r: # move it to IX
                 self.move(ix, r)
             else:
@@ -776,10 +776,10 @@ class Allocator(object):
                     # TODO skip all this if we don't need to save the result
                     # (e.g. we're about to TACIf and kill it)
                     self.spill(a) # in theory there should be nothing to do except mark it as free
-                    self.code.append(self.RTLMove(a, AST.make_int(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
-                    label = self.tac.genlabel()
+                    self.code.append(self.RTLMove(a, AST.Byte.make(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
+                    label = self.wraplabel(self.tac.genlabel())
                     self.code.append(self.RTLCJump(label, Flag('Z')))
-                    self.code.append(self.RTLAdd(a, AST.make_int(1)))
+                    self.code.append(self.RTLAdd(a, AST.Byte.make(1)))
                     self.code.append(self.RTLLabel(label))
                     a.user = t.dst
                     a.dirty()
@@ -1084,9 +1084,6 @@ if __name__ == "__main__":
         source = sys.stdin.read()
     parse_tree = parser.parse(source)
     ast = AST.AST_builder(parse_tree)
-    for decl in ast.decls:
-        print decl
-    print
     tac = tacifier.tacify(ast)
     tac.debug()
     assert tac.in_func is None, tac.in_func

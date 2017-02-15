@@ -652,10 +652,7 @@ if __name__ == "__main__":
     for decl in ast.decls:
         print decl
     print
-    tac = TACifier()
-    for decl in ast.decls:
-        tac.add(decl)
-    tac.normalise_globals()
+    tac = tacify(ast)
     tac.debug()
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
