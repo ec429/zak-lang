@@ -252,7 +252,7 @@ class TACifier(object):
         for arg in arglist:
             if arg.ident in scope:
                 raise TACError("Name", name, "redeclared within parameter list")
-            scope[arg.ident] = (AST.StorageClass("auto"), arg.typ)
+            scope[arg.ident] = (AST.Auto, arg.typ)
         return scope
     def get_member_type(self, styp, member):
         if not isinstance(styp, AST.Struct):
@@ -278,8 +278,8 @@ class TACifier(object):
                     raise TACError("Dereferencing non-pointer", lval.arg)
                 sym = self.gensym()
                 typ = pointee.typ.target
-                self.scopes[-1][sym] = (AST.StorageClass('auto'), typ)
-                pre.insert(0, self.TACDeclare(sym, AST.StorageClass('auto'), typ))
+                self.scopes[-1][sym] = (AST.Auto, typ)
+                pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
                 post = [self.TACWrite(pointee.name, sym)]
                 if isinstance(pointee.name, self.Gensym): # no-one but us has a reference to it
                     post.append(self.TACKill(pointee.name))
@@ -294,8 +294,8 @@ class TACifier(object):
                     raise TACError("Dereferencing (by ->) non-pointer", lval.target)
                 sym = self.gensym()
                 typ = self.get_member_type(target.typ.target, member)
-                self.scopes[-1][sym] = (AST.StorageClass('auto'), typ)
-                pre.insert(0, self.TACDeclare(sym, AST.StorageClass('auto'), typ))
+                self.scopes[-1][sym] = (AST.Auto, typ)
+                pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
                 post = [self.TACMemberWrite(target.name, member, sym)]
                 if isinstance(target.name, self.Gensym): # no-one but us has a reference to it
                     post.append(self.TACKill(target.name))
@@ -319,12 +319,12 @@ class TACifier(object):
         if isinstance(rval, AST.StringLiteral):
             sym = self.gensym()
             typ = AST.Pointer.make(AST.Byte(), 'const')
-            self.scopes[-1][sym] = (AST.StorageClass('auto'), typ)
-            stmts = [self.TACDeclare(sym, AST.StorageClass('auto'), typ)]
+            self.scopes[-1][sym] = (AST.Auto, typ)
+            stmts = [self.TACDeclare(sym, AST.Auto, typ)]
             string = self.gensym()
             self.strings[string] = rval.text
             styp = AST.Array.make(AST.Byte(), len(rval.text) + 1)
-            stmts.append(self.TACDeclare(string, AST.StorageClass('static'), styp))
+            stmts.append(self.TACDeclare(string, AST.Static, styp))
             stmts.append(self.TACAddress(sym, string))
             return (self.Identifier(typ, sym), stmts)
         raise UnhandledEntity(rval)
@@ -372,7 +372,7 @@ class TACifier(object):
             right, rs = self.walk_expr(expr.right)
             sym = self.gensym() # either use in a conditional context, or assign (really Rename) to a variable
             typ = AST.Bool()
-            return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, AST.StorageClass('auto'), typ),
+            return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, AST.Auto, typ),
                                                           self.TACCompare(sym, expr.op, left.name, right.name)])
         if isinstance(expr, AST.UnaryExpr):
             if expr.op == '*':
@@ -381,9 +381,9 @@ class TACifier(object):
                     raise TACError("Dereferencing non-pointer", expr.arg)
                 sym = self.gensym()
                 typ = pointee.typ.target
-                self.scopes[-1][sym] = (AST.StorageClass('auto'), typ)
+                self.scopes[-1][sym] = (AST.Auto, typ)
                 stmts = ps
-                stmts.append(self.TACDeclare(sym, AST.StorageClass('auto'), typ))
+                stmts.append(self.TACDeclare(sym, AST.Auto, typ))
                 stmts.append(self.TACDeref(sym, pointee.name))
                 if isinstance(pointee.name, self.Gensym): # no-one but us has a reference to it
                     stmts.append(self.TACKill(pointee.name))
@@ -431,8 +431,8 @@ class TACifier(object):
                     raise TACError("Dereferencing (by ->) non-pointer", expr.target)
                 sym = self.gensym()
                 typ = self.get_member_type(target.typ.target, member)
-                self.scopes[-1][sym] = (AST.StorageClass('auto'), typ)
-                pre.insert(0, self.TACDeclare(sym, AST.StorageClass('auto'), typ))
+                self.scopes[-1][sym] = (AST.Auto, typ)
+                pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
                 pre.append(self.TACMemberRead(target.name, member, sym))
                 if isinstance(target.name, self.Gensym): # no-one but us has a reference to it
                     pre.append(self.TACKill(target.name))
@@ -507,9 +507,9 @@ class TACifier(object):
             raise TACError("Identifier", name, "redefined in same scope")
         if sc is None:
             if isinstance(decl, AST.Function):
-                sc = AST.StorageClass("extern")
+                sc = AST.Extern
             else:
-                sc = AST.StorageClass("auto")
+                sc = AST.Auto
         self.scopes[-1][name] = (sc, decl.typ)
         if init is None:
             stmts.append(self.TACDeclare(name, sc, decl.typ))
@@ -603,7 +603,7 @@ class TACifier(object):
         if isinstance(decl, AST.FunctionDefn):
             sc = decl.sc
             if sc is None:
-                sc = AST.StorageClass("auto")
+                sc = AST.Auto
             if sc.extern:
                 raise TACError("extern function with definition")
             if self.in_func is not None: # should be impossible, parser won't allow it

@@ -113,6 +113,10 @@ class StorageClass(object):
     def __str__(self):
         return self.sc
 
+Auto = StorageClass('auto')
+Extern = StorageClass('extern')
+Static = StorageClass('static')
+
 class DeclIdentifier(object):
     def __init__(self, ident, typ):
         self.ident = ident
@@ -495,11 +499,11 @@ class Declare(object):
         self.sc = declare.get('storage_class')
         if self.sc is not None:
             if self.sc.get('static') is not None:
-                self.sc = StorageClass('static')
+                self.sc = Static
             elif self.sc.get('extern') is not None:
-                self.sc = StorageClass('extern')
+                self.sc = Extern
             elif self.sc.get('auto') is not None:
-                self.sc = StorageClass('auto')
+                self.sc = Auto
             else:
                 raise UnhandledEntity(self.sc)
         if declare.get('qualifier_list') is not None:
@@ -585,11 +589,11 @@ class FunctionDefn(object):
         self.sc = defn.get('storage_class')
         if self.sc is not None:
             if self.sc.get('static') is not None:
-                self.sc = StorageClass('static')
+                self.sc = Static
             elif self.sc.get('extern') is not None:
-                self.sc = StorageClass('extern')
+                self.sc = Extern
             elif self.sc.get('auto') is not None:
-                self.sc = StorageClass('auto')
+                self.sc = Auto
             else:
                 raise UnhandledEntity(self.sc)
         if defn.get('qualifier_list') is not None:
