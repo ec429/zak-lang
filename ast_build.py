@@ -321,9 +321,15 @@ def DoAdditive(expr):
         raise UnhandledEntity(expr['do_additive'])
     return DoBitwise(expr)
 
+class RelationExpr(BinaryExpr):
+    def __init__(self, expr):
+        self.left = DoAdditive(expr['left'])
+        self.op = expr['op']
+        self.right = DoAdditive(expr['right'])
+
 def DoRelation(expr):
     if expr.get('do_relation') is not None:
-        raise UnhandledEntity(expr['do_relation'])
+        return RelationExpr(expr['do_relation'])
     return DoAdditive(expr)
 
 class EqualityExpr(BinaryExpr):
