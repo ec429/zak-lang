@@ -16,11 +16,14 @@ class UnhandledEntity(ASTError):
         return '\n'.join((dump, "could not handle entity"))
 
 class Type(object):
+    fixed_size = None
     def compat(self, other):
         return NotImplemented
     @classmethod
     def make(cls, *args):
         raise NotImplementedError()
+    def __repr__(self):
+        return str(self)
 
 class PrimitiveType(Type):
     name = None
@@ -30,15 +33,19 @@ class PrimitiveType(Type):
         return isinstance(other, PrimitiveType) and self.name == other.name
 class Void(PrimitiveType):
     name = 'void'
+    fixed_size = 1
 class Bool(PrimitiveType):
     name = 'bool'
+    fixed_size = 1
 class Byte(PrimitiveType):
     name = 'byte'
+    fixed_size = 1
     @classmethod
     def make(cls, val):
         return IntConst({'dec': str(val)})
 class Word(PrimitiveType):
     name = 'word'
+    fixed_size = 2
     def compat(self, other):
         return isinstance(other, (Byte, Word))
     @classmethod
@@ -112,6 +119,7 @@ class StorageClass(object):
         return self.sc == 'static'
     def __str__(self):
         return self.sc
+    __repr__ = __str__
 
 Auto = StorageClass('auto')
 Extern = StorageClass('extern')
@@ -154,7 +162,7 @@ class Array(Type):
         return 'array [%s] of %s' % (self.dim, self.type)
     @classmethod
     def make(cls, etyp, dim):
-        return cls({'dimension': make_int_const_expr(dim)}, etyp)
+        return cls({'dimension': make_int(dim)}, etyp)
 
 def DirectDecl(direct_decl, typ):
     # <direct-decl>   ::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
@@ -175,6 +183,7 @@ def DirectDecl(direct_decl, typ):
     return DeclIdentifier(direct_decl.get('identifier'), typ)
 
 class Pointer(Type):
+    fixed_size = 2
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
     def __init__(self, pointer, target):
         self.qualifiers = pointer.get('qualifier_list', {}).keys()
@@ -208,12 +217,11 @@ class DeclSpec(object):
     def __str__(self):
         return '%s as %s'%(self.ident, self.object)
 
-def make_int_const_expr(val):
-    return {'constant':
-                {'int_const':
-                    {'dec': '%d' % (val,)}
-                }
-            }
+def make_int(val, long=False):
+    d = {'dec': '%d' % (val,)}
+    if long:
+        d['long'] = []
+    return {'constant': {'int_const': d}}
 
 class IntConst(object):
     def __init__(self, expr):
@@ -226,6 +234,7 @@ class IntConst(object):
         else:
             raise UnhandledEntity(expr)
         self.long = expr.get('long') is not None
+        self.typ = Word() if self.long else Byte()
     def __str__(self):
         return str(self.value) + ('l' if self.long else '')
 
@@ -632,7 +641,7 @@ if __name__ == "__main__":
         source = sys.stdin.read()
     parse_tree = parser.parse(source)
     print "Parse tree:"
-    pprint.pprint(parse_tree)
+    print parse_tree.dump()
     print
     ast = AST_builder(parse_tree)
     for decl in ast.decls:

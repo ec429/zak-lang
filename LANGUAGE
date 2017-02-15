@@ -17,6 +17,10 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * One addition is register annotations, which are only permitted in function
  * prototypes (including definitions) and function-pointer types; they specify
  * the calling conventions.
+ * Because we don't have K&R-style (prototypeless) functions, an empty parameter
+ * list means 'function takes no parameters'.  This would be blindingly obvious
+ * were it not for the fact that C requires a single unnamed parameter of type
+ * void to indicate the same thing.
  */
 <source>	::= <declare> <source>?
 <declare>	::= <storage-class>? <qualifier-list>? <type> <declaration>

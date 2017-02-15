@@ -1,9 +1,7 @@
 #!/usr/bin/python
 
 import sys, pprint
-import parser, tacifier
-LEX = parser.Lexer
-PAR = parser.Parser
+import ast_build as AST, tacifier
 TAC = tacifier.TACifier
 
 ## Perform stack frame and register allocation on the TAC intermediate form
@@ -110,7 +108,8 @@ class Flag(object):
         return '#'+self.name
 
 class RTLStructDef(object):
-    def __init__(self, decls):
+    def __init__(self, name, decls):
+        self.name = name
         self.decls = decls
     def allocate(self, rtl):
         assert isinstance(rtl, Allocator), rtl
@@ -124,6 +123,8 @@ class RTLStructDef(object):
             self.members.append((at, t.typ, t.name, size))
             self.offsets[t.name] = at
             at += size
+        if at > 128:
+            raise AllocError("struct", self.name, "too big", at, "exceeds limit of 128 bytes")
         self.size = at
     def __repr__(self):
         return 'RTLStructDef(%r)'%(self.decls,)
@@ -200,6 +201,13 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLWrite(%s, %s)'%(self.dst, self.src)
+    class RTLIndirectRead(RTLStatement):
+        def __init__(self, dst, src, offset):
+            self.dst = dst
+            self.src = src
+            self.offset = offset
+        def __repr__(self):
+            return 'RTLIndirectRead(%s, %s, %d)'%(self.dst, self.src, self.offset)
     class RTLIndirectWrite(RTLStatement):
         def __init__(self, dst, offset, src):
             self.dst = dst
@@ -237,9 +245,9 @@ class Allocator(object):
                 raise AllocError(name, "not in global scope")
             sc, decl = globs[name]
         self.func = func
-        self.sc = sc or LEX.Auto("auto")
+        self.sc = sc or AST.Auto
         self.decl = decl
-        self.names = dict((name, (LEX.Extern("extern"), typ)) for name, (sc, typ) in globs.items())
+        self.names = dict((name, (AST.Extern, typ)) for name, (sc, typ) in globs.items())
         self.stack = {}
         self.sp = 0
         self.static = {}
@@ -260,26 +268,29 @@ class Allocator(object):
                     if c.name == name: return c
         raise AllocError("No such register", name)
     def sizeof(self, typ):
-        if isinstance(typ, PAR.ValueOfType):
-            if typ.typ in builtin_sizes:
-                return builtin_sizes[typ.typ]
-            if isinstance(typ.typ, PAR.StructDecl):
-                if typ.typ.tag in self.structs:
-                    return self.structs[typ.typ.tag].size
-                raise AllocError("Incomplete struct type", typ.typ.tag)
-            raise AllocError("Unrecognised value type", typ)
+        if typ.fixed_size is not None:
+            return typ.fixed_size
+        if isinstance(typ, AST.Struct):
+            if typ.tag in self.structs:
+                return self.structs[typ.tag].size
+            raise AllocError("Incomplete struct type", typ.typ.tag)
+        if isinstance(typ, AST.Array):
+            esiz = self.sizeof(typ.type)
+            if not isinstance(typ.dim, AST.IntConst):
+                raise AllocError("Could not size array", typ)
+            return esiz * typ.dim.value
+        raise NotImplementedError("sizeof", typ)
         if isinstance(typ, PAR.Pointer):
             return 2
         if isinstance(typ, PAR.Array):
             esiz = self.sizeof(typ.pointee)
             return esiz * typ.n
-        raise NotImplementedError("sizeof", typ)
     def is_on_stack(self, name):
         return name in self.stack
     def spill(self, r, ignorelocal=False):
         if r.user:
             name = r.user
-            if isinstance(name, (PAR.Literal, PAR.LongLiteral)):
+            if isinstance(name, AST.IntConst):
                 r.user = None # nothing to spill
                 return
             assert name in self.names
@@ -341,8 +352,10 @@ class Allocator(object):
                 return r
         raise NotImplementedError("Can't spill, all locked")
     def fetch_src_byte(self, src):
-        if isinstance(src, PAR.Literal):
-            return src
+        if isinstance(src, AST.IntConst):
+            if src.long:
+                raise AllocError("Wrong size:", src, "is long literal")
+            return src.value
         if src not in self.names:
             raise AllocError("Name not found", src)
         sc, typ = self.names[src]
@@ -360,15 +373,15 @@ class Allocator(object):
             self.fill(reg, src)
         return reg
     def fetch_src_word(self, src):
-        if isinstance(src, PAR.LongLiteral):
-            return src
-        if isinstance(src, PAR.Literal):
-            return PAR.LongLiteral(src.value)
+        if isinstance(src, AST.IntConst):
+            # cast it to word
+            return AST.Word.make(src.value)
         if src not in self.names:
             raise AllocError("Name not found", src)
         sc, typ = self.names[src]
-        if isinstance(typ, PAR.Array):
-            typ = PAR.Pointer(typ.pointee)
+        if isinstance(typ, AST.Array):
+            # decay it to a pointer
+            typ = AST.Pointer.make(typ.etyp)
         size = self.sizeof(typ)
         if size != 2:
             raise AllocError("Wrong size:", src, "is", typ, "of size", size)
@@ -447,6 +460,17 @@ class Allocator(object):
             else:
                 self.fill(hl, name)
         return hl
+    def load_word_into_ix(self, name):
+        ix = self.register('IX')
+        if ix.user != name:
+            if not ix.available: # don't bother trying to move, just spill it
+                self.spill(ix)
+            r = self.reg_find_word(name)
+            if r: # move it to IX
+                self.move(ix, r)
+            else:
+                self.fill(ix, name)
+        return ix
     def tac_to_rtl(self, t):
         if isinstance(t, TAC.TACDeclare): return
         if isinstance(t, TAC.TACAssign):
@@ -458,7 +482,7 @@ class Allocator(object):
                 s = self.fetch_src_byte(t.src)
                 r = self.reg_find_byte(t.dst)
                 if r is None:
-                    if isinstance(s, PAR.Literal):
+                    if isinstance(s, AST.IntConst):
                         r = self.choose_byte_register()
                         r.claim(t.dst)
                     else: # just rename it
@@ -478,7 +502,7 @@ class Allocator(object):
                 s = self.fetch_src_word(t.src)
                 r = self.reg_find_word(t.dst)
                 if r is None:
-                    if isinstance(s, PAR.Literal):
+                    if isinstance(s, AST.IntConst):
                         r = self.choose_word_register()
                         r.claim(t.dst)
                     else: # just rename it
@@ -494,7 +518,7 @@ class Allocator(object):
                     self.kill(t.src)
                 return
             else:
-                raise TACError("Tried to move an aggregate, size = %d"%(size,))
+                raise AllocError("Tried to move an aggregate, size = %d"%(size,))
         if isinstance(t, TAC.TACAddress):
             if self.is_on_stack(t.src):
                 raise NotImplementedError(t)
@@ -523,7 +547,7 @@ class Allocator(object):
                     self.kill(t.src)
                 return
             elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
-                if isinstance(t.src, (PAR.Literal, PAR.LongLiteral)):
+                if isinstance(t.src, AST.IntConst):
                     if t.src.value in [1, -1]:
                         r = self.fetch_src_word(t.dst)
                         self.code.append(self.RTLAdd(r, t.src))
@@ -547,13 +571,11 @@ class Allocator(object):
                     self.kill(t.src)
                 return
             else:
-                raise TACError("Tried to add to an aggregate, size = %d"%(size,))
+                raise AllocError("Tried to add to an aggregate, size = %d"%(size,))
         if isinstance(t, TAC.TACReturn):
             if t.src is not None: # else return type is void and there's nothing to return
-                if isinstance(t.src, PAR.Literal):
-                    typ = PAR.ValueOfType('byte')
-                elif isinstance(t.src, PAR.LongLiteral):
-                    typ = PAR.ValueOfType('word')
+                if isinstance(t.src, AST.IntConst):
+                    typ = t.src.typ
                 else:
                     if t.src not in self.names:
                         raise AllocError("Name not found", t.src)
@@ -585,7 +607,7 @@ class Allocator(object):
             if t.src not in self.names:
                 raise AllocError("Name not found", t.src)
             ssc, styp = self.names[t.src]
-            if not isinstance(styp, PAR.Pointer):
+            if not isinstance(styp, AST.Pointer):
                 raise AllocError("Not of pointer type", t.src, styp)
             p = self.reg_find_word(t.src)
             size = self.sizeof(dtyp)
@@ -639,7 +661,7 @@ class Allocator(object):
             if t.src not in self.names:
                 raise AllocError("Name not found", t.src)
             ssc, styp = self.names[t.src]
-            if not isinstance(dtyp, PAR.Pointer):
+            if not isinstance(dtyp, AST.Pointer):
                 raise AllocError("Not of pointer type", t.dst, dtyp)
             p = self.reg_find_word(t.dst)
             size = self.sizeof(styp)
@@ -751,11 +773,13 @@ class Allocator(object):
                 r.unlock()
                 if t.op == '==':
                     self.code.append(self.RTLCp(a, r))
+                    # TODO skip all this if we don't need to save the result
+                    # (e.g. we're about to TACIf and kill it)
                     self.spill(a) # in theory there should be nothing to do except mark it as free
-                    self.code.append(self.RTLMove(a, PAR.Literal(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
+                    self.code.append(self.RTLMove(a, AST.make_int(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
                     label = self.tac.genlabel()
                     self.code.append(self.RTLCJump(label, Flag('Z')))
-                    self.code.append(self.RTLAdd(a, PAR.Literal(1)))
+                    self.code.append(self.RTLAdd(a, AST.make_int(1)))
                     self.code.append(self.RTLLabel(label))
                     a.user = t.dst
                     a.dirty()
@@ -767,14 +791,17 @@ class Allocator(object):
             self.code.append(self.RTLLabel(self.wraplabel(t.name)))
             return
         if isinstance(t, TAC.TACIf):
-            if t.cond not in self.names:
+            if isinstance(t.cond, TAC.FlagIdent):
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag(t.cond.name)))
+                return
+            if t.cond.name not in self.names:
                 raise AllocError("Name not found", t.cond)
-            sc, typ = self.names[t.cond]
+            sc, typ = self.names[t.cond.name]
             size = self.sizeof(typ)
             # spill all registers
-            self.clobber_registers(leave=t.cond)
+            self.clobber_registers(leave=t.cond.name)
             if size == 1: # cond has to be in A
-                a = self.load_byte_into_a(t.cond)
+                a = self.load_byte_into_a(t.cond.name)
                 self.code.append(self.RTLAnd(a, a))
                 self.clobber_registers()
                 self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
@@ -789,9 +816,72 @@ class Allocator(object):
             # any register containing it is no longer live
             self.kill(t.name)
             return
+        if isinstance(t, TAC.TACMemberRead):
+            if t.src not in self.names:
+                raise AllocError("Name not found", t.src)
+            ptyp = self.names[t.src][1]
+            if not isinstance(ptyp, AST.Pointer):
+                raise AllocError(t.src, "is not a pointer")
+            styp = ptyp.target
+            if not isinstance(styp, AST.Struct):
+                raise AllocError("*", t.src, "is not a struct")
+            struct = self.structs[styp.tag]
+            offset = struct.offsets[t.tag]
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            dtyp = self.names[t.dst][1]
+            size = self.sizeof(dtyp)
+            ix = self.load_word_into_ix(t.src)
+            self.kill(t.dst) # we're about to overwrite it
+            # don't need to lock IX as nothing ever chooses it
+            if size == 1:
+                r = self.choose_byte_register()
+                r.claim(t.dst)
+                self.code.append(self.RTLIndirectRead(r, ix, offset))
+                return
+            if size == 2:
+                hl = self.register('HL')
+                hl.lock() # can't use HL with IX
+                r = self.choose_word_register()
+                hl.unlock()
+                r.claim(t.dst)
+                self.code.append(self.RTLIndirectRead(r, ix, offset))
+                return
+            raise NotImplementedError(size, t)
+        if isinstance(t, TAC.TACMemberWrite):
+            if t.src not in self.names:
+                raise AllocError("Name not found", t.src)
+            dtyp = self.names[t.src][1]
+            size = self.sizeof(dtyp)
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            ptyp = self.names[t.dst][1]
+            if not isinstance(ptyp, AST.Pointer):
+                raise AllocError(t.dst, "is not a pointer")
+            styp = ptyp.target
+            if not isinstance(styp, AST.Struct):
+                raise AllocError("*", t.dst, "is not a struct")
+            struct = self.structs[styp.tag]
+            offset = struct.offsets[t.tag]
+            ix = self.load_word_into_ix(t.dst)
+            # don't need to lock IX as nothing ever chooses it
+            if size == 1:
+                r = self.fetch_src_byte(t.src)
+                self.code.append(self.RTLIndirectWrite(ix, offset, r))
+                return
+            if size == 2:
+                hl = self.register('HL')
+                hl.lock() # can't use HL with IX
+                r = self.fetch_src_word(t.src) # but it might already be in HL
+                hl.unlock()
+                if r.name == 'HL': # in which case let's move it
+                    r = self.exdehl(r)
+                self.code.append(self.RTLIndirectWrite(ix, offset, r))
+                return
+            raise NotImplementedError(size, t)
         raise NotImplementedError(t)
     def wraplabel(self, label):
-        return LEX.Identifier('_%s_%s'%(self.name, label))
+        return '_%s_%s'%(self.name, label)
     def exdehl(self, follow):
         if follow and follow.size == 1:
             raise AllocError("exdehl following %s, size 1"%(follow,))
@@ -836,24 +926,21 @@ class Allocator(object):
         return rv
     @property
     def void_function(self):
-        if not isinstance(self.decl, PAR.FunctionDecl): # can't happen
-            raise TACError("Not in a function")
-        return self.decl.bound == PAR.ValueOfType("void")
+        if not isinstance(self.decl, AST.Function): # can't happen
+            raise AllocError("Not in a function")
+        return self.decl.ret.compat(AST.Void())
     def allocate_params(self):
-        if not isinstance(self.decl, PAR.FunctionDecl): # can't happen
-            raise AllocError(self.decl, "is not a FunctionDecl")
-        if not self.decl.arglist.args:
-            raise AllocError(self.decl, "has no arglist")
-        if len(self.decl.arglist.args) == 1 and self.decl.arglist.args[0][1] == PAR.ValueOfType("void"):
-            pass # no arguments
-        else:
-            for nam,typ in self.decl.arglist.args:
-                size = self.sizeof(typ)
-                self.stack[nam] = [self.sp, typ, size, True, True]
-                self.names[nam] = (LEX.Auto("auto"), typ)
-                self.sp += size
-                if self.sp > 127:
-                    raise AllocError("No room on stack for param", nam, typ, size)
+        if not isinstance(self.decl, AST.Function): # can't happen
+            raise AllocError(self.decl, "is not a Function")
+        for p in self.decl.params:
+            name = p.ident
+            typ = p.typ
+            size = self.sizeof(typ)
+            self.stack[name] = [self.sp, typ, size, True, True]
+            self.names[name] = (AST.Auto, typ)
+            self.sp += size
+            if self.sp > 127:
+                raise AllocError("No room on stack for param", name, typ, size)
         self.caller_stack_size = self.sp
     def prepare_locals(self):
         # compute their sizes, but don't reserve stack space yet
@@ -863,12 +950,10 @@ class Allocator(object):
                 name = t.name
                 self.names[name] = (t.sc, t.typ)
                 size = self.sizeof(t.typ)
-                if isinstance(t.sc, LEX.Auto):
+                if t.sc.auto:
                     self.stack[name] = [None, t.typ, size, False, False]
-                elif isinstance(t.sc, LEX.Static):
+                elif t.sc.static:
                     self.static[name] = (size, t.typ)
-                else:
-                    raise TACError(t.sc)
     def allocate_locals(self):
         for name,(sp, typ, size, filled, spilled) in self.stack.items():
             if filled and spilled and sp is None:
@@ -881,13 +966,16 @@ class Allocator(object):
             if isinstance(t, TAC.TACDeclare):
                 name = t.name
                 self.names[name] = (t.sc, t.typ)
+                if isinstance(t.typ, AST.Function):
+                    # Nothing to allocate here, it's just a prototype
+                    continue
                 size = self.sizeof(t.typ)
-                if isinstance(t.sc, (LEX.Auto, LEX.Static)):
+                if t.sc.auto:
                     self.stack[name] = [None, t.typ, size, True, True]
-                else:
-                    raise TACError(t.sc)
+                elif t.sc.static:
+                    self.static[name] = (size, t.typ)
             elif isinstance(t, TAC.TACStructDef):
-                s = RTLStructDef(t.defn)
+                s = RTLStructDef(t.tag, t.defn)
                 s.allocate(self)
                 self.structs[t.tag] = s
     def allocate_registers(self):
@@ -911,17 +999,26 @@ class Allocator(object):
         self.inits = {}
         for t in self.func:
             if isinstance(t, TAC.TACDeclare):
-                if t.name not in self.stack: # can't happen
-                    raise AllocError("Declared unknown global", t)
-                self.inits[t.name] = None
-            elif isinstance(t, TAC.TACInitGlobal):
-                if t.name not in self.inits: # can't happen
+                if isinstance(t.typ, AST.Function):
+                    continue
+                if t.sc.static:
+                    if t.name not in self.static: # can't happen
+                        raise AllocError("Declared unknown static global", t)
+                elif t.sc.auto:
+                    if t.name not in self.stack: # can't happen
+                        raise AllocError("Declared unknown global", t)
+                self.inits[t.name] = self.tac.strings.get(t.name)
+            elif isinstance(t, TAC.TACAssign):
+                if t.dst not in self.inits: # can't happen
                     raise AllocError("Initialised undeclared global", t)
-                if self.inits[t.name] is not None: # also can't happen
-                    raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.name])
-                self.inits[t.name] = t.value
+                if self.inits[t.dst] is not None: # also can't happen
+                    raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.dst])
+                self.inits[t.dst] = t.src
             elif isinstance(t, TAC.TACStructDef):
                 pass
+            elif isinstance(t, TAC.TACAddress):
+                if t.src in self.static or t.src in self.stack:
+                    self.inits[t.dst] = t
             else:
                 raise NotImplementedError(t)
     def allocate(self):
@@ -939,49 +1036,60 @@ class Allocator(object):
             raise
     def err(self, text):
         print >>sys.stderr, text
+    def debug(self):
+        print "static:"
+        pprint.pprint(self.static)
+        print "stack:"
+        pprint.pprint(self.stack)
+        print "code:"
+        pprint.pprint(self.code)
+        print "structs:"
+        for tag, struc in self.structs.items():
+            print "  struct", tag
+            for off, typ, memb, size in struc.members:
+                print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
 
 ## Entry point
 
-def alloc(parse_tree, tac):
+def alloc(tac, debug=False):
     allocations = {}
     # Do file-scope first, to get struct definitions
+    if debug:
+        print "Allocating globals"
     fs = Allocator(tac.functions[None], None, tac)
     fs.allocate()
+    if debug:
+        fs.debug()
     allocations[None] = fs
     for name, func in tac.functions.items():
         if name is None: continue
+        if debug:
+            print "Allocating", name
         alloc = Allocator(func, name, tac)
         alloc.structs = fs.structs
         alloc.allocate()
+        if debug:
+            alloc.debug()
         allocations[name] = alloc
     return allocations
 
 ## Test code
 
 if __name__ == "__main__":
+    import parser
     if len(sys.argv) > 1:
         with open(sys.argv[1], 'r') as f:
             source = f.read()
     else:
         source = sys.stdin.read()
     parse_tree = parser.parse(source)
-    print "Parse globals:"
-    pprint.pprint(parse_tree.globals)
+    ast = AST.AST_builder(parse_tree)
+    for decl in ast.decls:
+        print decl
     print
-    tac = tacifier.tacify(parse_tree)
-    print "TAC functions:"
-    pprint.pprint(tac.functions)
+    tac = tacifier.tacify(ast)
+    tac.debug()
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
     print
-    allocations = {}
-    for name, func in tac.functions.items():
-        print "Allocating", name or "globals"
-        alloc = Allocator(func, name, tac)
-        alloc.allocate()
-        allocations[name] = alloc
-    print "Structs:"
-    for tag, struc in allocations[None].structs.items():
-        print "  struct", tag
-        for off, typ, memb, size in struc.members:
-            print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
+    allocations = alloc(tac, debug=True)
