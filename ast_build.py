@@ -81,12 +81,14 @@ class Enum(Type):
     def __init__(self, enum):
         self.tag = enum['etag']
         self.body = enum.get('body')
+        self.typ = None
         if self.body is not None:
-            self.body = [EnumValue(e) for e in self.body]
+            self.typ = get_type(self.body['type'])
+            self.body = [EnumValue(e) for e in self.body['values']]
     def __str__(self):
         body = ''
         if self.body is not None:
-            body = ' {%s}' % (', '.join(map(str, self.body)),)
+            body = ' %s {%s}' % (self.typ, ', '.join(map(str, self.body)))
         return 'enum %s%s' % (self.tag, body)
     def compat(self, other):
         return isinstance(other, Enum) and self.tag == other.tag
@@ -186,6 +188,7 @@ class Pointer(Type):
     fixed_size = 2
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
     def __init__(self, pointer, target):
+        # TODO this is wrong, we should Qualify(target)
         self.qualifiers = pointer.get('qualifier_list', {}).keys()
         if pointer.get('pointer') is not None:
             target = Pointer(pointer['pointer'], target)
@@ -265,6 +268,8 @@ class Identifier(object):
         self.ident = ident[0]
     def __str__(self):
         return self.ident
+    def __repr__(self):
+        return '%s(%s)' % (self.__class__.__name__, self)
 
 class FlagIdent(object):
     def __init__(self, expr):

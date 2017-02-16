@@ -11,6 +11,26 @@ class AllocError(Exception): pass
 
 builtin_sizes = {'bool':1, 'byte': 1, 'word': 2}
 
+class Literal(object):
+    def __init__(self, value):
+        self.value = value
+        self.name = None
+        self.user = self
+        self.isdirty = False
+    def lock(self): pass
+    def unlock(self): pass
+    def free(self): pass
+    def __str__(self):
+        return str(self.value)
+    __repr__ = __str__
+    def __eq__(self, other):
+        return isinstance(other, Literal) and self.value == other.value
+class ByteLiteral(Literal):
+    size = 1
+    typ = AST.Byte()
+class WordLiteral(Literal):
+    size = 2
+    typ = AST.Word()
 class Register(object):
     def __init__(self, name):
         self.name = name
@@ -21,6 +41,8 @@ class Register(object):
     def available(self):
         return not self.user
     def claim(self, user):
+        if isinstance(user, (AST.IntConst, int)): # should be Literals
+            raise AllocError("Storing", user, "in", self)
         if not self.available:
             raise AllocError("Attempted to claim %s, in use by %s"%(self, self.user))
         self.user = user
@@ -129,6 +151,26 @@ class RTLStructDef(object):
     def __repr__(self):
         return 'RTLStructDef(%r)'%(self.decls,)
 
+class RTLEnumDef(object):
+    def __init__(self, name, typ, values):
+        self.name = name
+        self.typ = typ
+        self.vals = values
+    def allocate(self, rtl):
+        assert isinstance(rtl, Allocator), rtl
+        self.values = {}
+        at = 0
+        for (n, v) in self.vals:
+            if v is not None:
+                next = rtl.evaluate(v)
+                if not self.typ.compat(next.typ):
+                    raise AllocError("Type of value", next, "does not match enum", self.name, self.typ)
+                at = next.value
+            self.values[n] = at
+            at += 1
+    def __repr__(self):
+        return 'RTLEnumDef(%s, %r)'%(self.typ, self.vals)
+
 class Allocator(object):
     class RTLStatement(object):
         def __repr__(self):
@@ -233,7 +275,7 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLCp(%s, %s)'%(self.dst, self.src)
-    def __init__(self, func, name, tac):
+    def __init__(self, func, name, tac, outer=None):
         self.name = name
         self.tac = tac
         globs = tac.scopes[0]
@@ -260,6 +302,18 @@ class Allocator(object):
         self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
         self.code = []
         self.structs = {}
+        self.enums = {}
+        if outer:
+            self.structs.update(outer.structs)
+            self.enums.update(outer.enums)
+    def evaluate(self, t):
+        # t is a TAC rvalue
+        sym, pre = t
+        if pre:
+            raise AllocError("Unhandled constant-expression", t)
+        assert isinstance(sym, TAC.Identifier), t
+        assert isinstance(sym.name, AST.IntConst), t
+        return sym.name
     def register(self, name):
         for r in self.registers:
             if r.name == name: return r
@@ -273,12 +327,26 @@ class Allocator(object):
         if isinstance(typ, AST.Struct):
             if typ.tag in self.structs:
                 return self.structs[typ.tag].size
-            raise AllocError("Incomplete struct type", typ.typ.tag)
+            raise AllocError("Incomplete struct type", typ.tag)
+        if isinstance(typ, AST.Enum):
+            if typ.tag in self.enums:
+                return self.sizeof(self.enums[typ.tag].typ)
+            raise AllocError("Incomplete enum type", typ.tag)
         if isinstance(typ, AST.Array):
             esiz = self.sizeof(typ.type)
-            if not isinstance(typ.dim, AST.IntConst):
+            if isinstance(typ.dim, AST.IntConst):
+                dim = typ.dim.value
+            elif isinstance(typ.dim, AST.EnumConst):
+                dtyp = self.tac.get_enum_type(typ.dim.name)
+                if dtyp not in self.enums:
+                    raise AllocError("Incomplete enum type", typ.dim.tag, "in array dimension")
+                edef = self.enums[dtyp].values
+                if typ.dim.name not in edef: # can't happen
+                    raise AllocError("Enum type mismatch", typ.dim.name, "is not a value for", dtyp, "in array dimension")
+                dim = edef[typ.dim.name]
+            else:
                 raise AllocError("Could not size array", typ)
-            return esiz * typ.dim.value
+            return esiz * dim
         raise NotImplementedError("sizeof", typ)
         if isinstance(typ, PAR.Pointer):
             return 2
@@ -290,10 +358,10 @@ class Allocator(object):
     def spill(self, r, ignorelocal=False):
         if r.user:
             name = r.user
-            if isinstance(name, AST.IntConst):
+            if isinstance(name, Literal):
                 r.user = None # nothing to spill
                 return
-            assert name in self.names
+            assert name in self.names, name
             if ignorelocal and name in self.stack:
                 r.clean() # it's local and we're not going to need it again
             if r.isdirty:
@@ -313,7 +381,9 @@ class Allocator(object):
         else:
             raise AllocError("Spilling empty register", r)
     def fill(self, r, name):
-        assert name in self.names or isinstance(name, (PAR.Literal, PAR.LongLiteral))
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            name = self.fetch_src_byte(name) # Literal
+        assert name in self.names or isinstance(name, Literal), name
         if r.user == name: # Nothing to do; we're already filled
             return
         assert r.available, (r, r.user, name)
@@ -355,7 +425,17 @@ class Allocator(object):
         if isinstance(src, AST.IntConst):
             if src.long:
                 raise AllocError("Wrong size:", src, "is long literal")
-            return src.value
+            return ByteLiteral(src.value)
+        if isinstance(src, AST.EnumConst):
+            typ = self.tac.get_enum_type(src.name)
+            if typ not in self.enums:
+                raise AllocError("Enum constant not found", src)
+            if not AST.Byte().compat(self.enums[typ].typ):
+                raise AllocError("Wrong size:", src, "is long enum const")
+            edef = self.enums[typ].values
+            if src.name not in edef: # can't happen
+                raise AllocError("Enum type mismatch", src.name, "is not a value for", typ)
+            return ByteLiteral(edef[src.name])
         if src not in self.names:
             raise AllocError("Name not found", src)
         sc, typ = self.names[src]
@@ -375,34 +455,57 @@ class Allocator(object):
     def fetch_src_word(self, src):
         if isinstance(src, AST.IntConst):
             # cast it to word
-            return AST.Word.make(src.value)
+            return WordLiteral(src.value)
+        if isinstance(src, AST.EnumConst):
+            typ = self.tac.get_enum_type(src.name)
+            if typ not in self.enums:
+                raise AllocError("Enum constant not found", src)
+            if not AST.Word().compat(self.enums[typ].typ): # can't happen
+                raise AllocError("Type mismatch:", src, "is non-integer")
+            edef = self.enums[typ].values
+            if src.name not in edef: # can't happen
+                raise AllocError("Enum type mismatch", src.name, "is not a value for", typ)
+            return WordLiteral(edef[src.name])
         if src not in self.names:
             raise AllocError("Name not found", src)
         sc, typ = self.names[src]
         if isinstance(typ, AST.Array):
             # decay it to a pointer
-            typ = AST.Pointer.make(typ.etyp)
+            typ = AST.Pointer.make(typ.type)
         size = self.sizeof(typ)
-        if size != 2:
+        if size == 1:
+            r = self.fetch_src_byte(src)
+            reg = self.choose_word_register()
+            self.move(reg, r)
+        elif size == 2:
+            # is it already in a register?
+            reg = self.reg_find_word(src)
+            if reg is None:
+                # no; we'll have to load it into one
+                if self.is_on_stack(src):
+                    reg = self.choose_word_register()
+                else: # have to go via LD HL,(nn)
+                    reg = self.free_hl(src)
+                self.fill(reg, src)
+        else:
             raise AllocError("Wrong size:", src, "is", typ, "of size", size)
-        # is it already in a register?
-        reg = self.reg_find_word(src)
-        if reg is None:
-            # no; we'll have to load it into one
-            if self.is_on_stack(src):
-                reg = self.choose_word_register()
-            else: # have to go via LD HL,(nn)
-                reg = self.free_hl(src)
-            self.fill(reg, src)
         return reg
     def reg_find_byte(self, name):
-        assert name in self.names or isinstance(name, PAR.Literal)
+        if isinstance(name, ByteLiteral):
+            return name
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            return self.fetch_src_byte(name)
+        assert name in self.names, name
         for r in self.all_byte_registers:
             if r.user == name:
                 return r
         return
     def reg_find_word(self, name):
-        assert name in self.names or isinstance(name, PAR.LongLiteral)
+        if isinstance(name, Literal):
+            return name
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            return self.fetch_src_word(name)
+        assert name in self.names, name
         for r in self.registers:
             if r.user == name:
                 return r
@@ -550,7 +653,8 @@ class Allocator(object):
                 if isinstance(t.src, AST.IntConst):
                     if t.src.value in [1, -1]:
                         r = self.fetch_src_word(t.dst)
-                        self.code.append(self.RTLAdd(r, t.src))
+                        s = self.fetch_src_word(t.src)
+                        self.code.append(self.RTLAdd(r, s))
                         r.dirty()
                         return
                     hl = self.load_word_into_hl(t.dst)
@@ -610,17 +714,19 @@ class Allocator(object):
             if not isinstance(styp, AST.Pointer):
                 raise AllocError("Not of pointer type", t.src, styp)
             p = self.reg_find_word(t.src)
+            if isinstance(dtyp, AST.Array):
+                dtyp = AST.Pointer.make(dtyp.type)
             size = self.sizeof(dtyp)
             if size == 1:
                 r = self.reg_find_byte(t.dst)
-                if (p == self.register('HL')):
+                if p == self.register('HL'):
                     # LD r,(HL)
                     if not r:
                         p.lock() # don't try to use H or L
                         r = self.choose_byte_register()
                         r.claim(t.dst) # no need to fill, as we're assigning to it
                         p.unlock()
-                elif (r == self.register('A')):
+                elif r == self.register('A'):
                     # LD A,(pp)
                     raise NotImplementedError(r, p)
                 elif r and r.name not in 'HL':
@@ -648,12 +754,20 @@ class Allocator(object):
                     self.fill(p, t.src)
                 else:
                     raise NotImplementedError(r, p)
-                self.code.append(self.RTLDeref(r, p))
-                r.dirty()
-                return
             else:
                 r = self.reg_find_word(t.dst)
-                raise NotImplementedError(size)
+                if p == self.register('HL'):
+                    # LD r,(HL)
+                    if not r:
+                        p.lock() # don't try to use H or L
+                        r = self.choose_word_register()
+                        r.claim(t.dst) # no need to fill, as we're assigning to it
+                        p.unlock()
+                else:
+                    raise NotImplementedError(r, p)
+            self.code.append(self.RTLDeref(r, p))
+            r.dirty()
+            return
         if isinstance(t, TAC.TACWrite):
             if t.dst not in self.names:
                 raise AllocError("Name not found", t.dst)
@@ -761,7 +875,16 @@ class Allocator(object):
             sc, typ = self.names[t.left]
             size = self.sizeof(typ)
             if size == 1: # dst has to be in A
-                r = self.fetch_src_byte(t.right)
+                swap = False
+                if t.op == '==':
+                    flag = 'Z'
+                elif t.op == '<':
+                    flag = 'C'
+                    swap = True
+                else:
+                    raise NotImplementedError(t.op)
+                left, right = (t.right, t.left) if swap else (t.left, t.right)
+                r = self.fetch_src_byte(right)
                 r.lock()
                 if r.name == 'A': # have to shunt it out of the way
                     s = self.choose_byte_register()
@@ -769,22 +892,20 @@ class Allocator(object):
                     self.move(s, r)
                     r = s
                     r.lock()
-                a = self.load_byte_into_a(t.left)
+                a = self.load_byte_into_a(left)
                 r.unlock()
-                if t.op == '==':
-                    self.code.append(self.RTLCp(a, r))
-                    # TODO skip all this if we don't need to save the result
-                    # (e.g. we're about to TACIf and kill it)
-                    self.spill(a) # in theory there should be nothing to do except mark it as free
-                    self.code.append(self.RTLMove(a, AST.Byte.make(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
-                    label = self.wraplabel(self.tac.genlabel())
-                    self.code.append(self.RTLCJump(label, Flag('Z')))
-                    self.code.append(self.RTLAdd(a, AST.Byte.make(1)))
-                    self.code.append(self.RTLLabel(label))
-                    a.user = t.dst
-                    a.dirty()
-                    return
-                raise NotImplementedError(t.op)
+                self.code.append(self.RTLCp(a, r))
+                # TODO skip all this if we don't need to save the result
+                # (e.g. we're about to TACIf and kill it)
+                self.spill(a) # in theory there should be nothing to do except mark it as free
+                self.code.append(self.RTLMove(a, ByteLiteral(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
+                label = self.wraplabel(self.tac.genlabel())
+                self.code.append(self.RTLCJump(label, Flag(flag)))
+                self.code.append(self.RTLAdd(a, ByteLiteral(1)))
+                self.code.append(self.RTLLabel(label))
+                a.user = t.dst
+                a.dirty()
+                return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACLabel):
             self.clobber_registers()
@@ -978,6 +1099,16 @@ class Allocator(object):
                 s = RTLStructDef(t.tag, t.defn)
                 s.allocate(self)
                 self.structs[t.tag] = s
+            elif isinstance(t, TAC.TACEnumDef):
+                e = RTLEnumDef(t.tag, t.typ, t.defn)
+                e.allocate(self)
+                self.enums[t.tag] = e
+            elif isinstance(t, TAC.TACAssign):
+                pass
+            elif isinstance(t, TAC.TACAddress):
+                pass
+            else:
+                raise AllocError("Unhandled", t)
     def allocate_registers(self):
         for t in self.func:
             try:
@@ -1013,8 +1144,21 @@ class Allocator(object):
                     raise AllocError("Initialised undeclared global", t)
                 if self.inits[t.dst] is not None: # also can't happen
                     raise AllocError("Initialised global", t, "but it was already initialised to", self.inits[t.dst])
-                self.inits[t.dst] = t.src
+                if t.dst in self.static:
+                    size, typ = self.static[t.dst]
+                elif t.dst in self.stack:
+                    _, typ, size, _, _ = self.stack[t.dst]
+                else: # can't happen?
+                    raise AllocError("Initialised nonexistent global", t)
+                if size == 1:
+                    self.inits[t.dst] = self.fetch_src_byte(t.src)
+                elif size == 2:
+                    self.inits[t.dst] = self.fetch_src_word(t.src)
+                else:
+                    raise NotImplementedError(t)
             elif isinstance(t, TAC.TACStructDef):
+                pass
+            elif isinstance(t, TAC.TACEnumDef):
                 pass
             elif isinstance(t, TAC.TACAddress):
                 if t.src in self.static or t.src in self.stack:
@@ -1048,12 +1192,17 @@ class Allocator(object):
             print "  struct", tag
             for off, typ, memb, size in struc.members:
                 print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
+        print "enums:"
+        for tag, enum in self.enums.items():
+            print "  enum", enum.typ, tag
+            for n, v in enum.values.items():
+                print "    %s %d"%(n, v)
 
 ## Entry point
 
 def alloc(tac, debug=False):
     allocations = {}
-    # Do file-scope first, to get struct definitions
+    # Do file-scope first, to get struct and enum definitions
     if debug:
         print "Allocating globals"
     fs = Allocator(tac.functions[None], None, tac)
@@ -1065,7 +1214,7 @@ def alloc(tac, debug=False):
         if name is None: continue
         if debug:
             print "Allocating", name
-        alloc = Allocator(func, name, tac)
+        alloc = Allocator(func, name, tac, outer=fs)
         alloc.structs = fs.structs
         alloc.allocate()
         if debug:

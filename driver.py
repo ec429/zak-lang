@@ -56,7 +56,10 @@ if __name__ == "__main__":
         print "==ASSEMBLY OUTPUT BEGINS HERE=="
         outs.append(sys.stdout)
     if not opts.dry_run:
-        dest = open(opts.output, 'w')
+        if opts.output == '-':
+            dest = sys.stdout
+        else:
+            dest = open(opts.output, 'w')
         outs.append(dest)
     def pr(line):
         for out in outs:

@@ -4,6 +4,7 @@ import sys, pprint, string
 import ast_build as AST, tacifier, allocator
 TAC = tacifier.TACifier
 REG = allocator.Register
+LIT = allocator.Literal
 RTL = allocator.Allocator
 Flag = allocator.Flag
 
@@ -52,7 +53,7 @@ class FunctionGenerator(Generator):
                     self.text.append("\tLD %s,(IY+%d)"%(op.reg.hi, offset+1))
                 else: # can't happen
                     raise GenError(size)
-            elif isinstance(op.name, AST.IntConst):
+            elif isinstance(op.name, LIT):
                 # if it's a word register, it auto-promotes the literal
                 assert op.reg.size <= op.name.size, op
                 self.text.append("\tLD %s,%d"%(op.reg, op.name.value))
@@ -129,7 +130,7 @@ class FunctionGenerator(Generator):
                     self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset + 1, op.src.hi))
                 else:
                     raise GenError(op.src.size)
-            elif isinstance(op.src, PAR.Literal):
+            elif isinstance(op.src, LIT):
                 self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.value))
             else:
                 raise GenError(op)
@@ -147,7 +148,7 @@ class FunctionGenerator(Generator):
             elif isinstance(op.src, TAC.Gensym):
                 # we assume it's a global one, and thus its name exists
                 self.text.append("\tLD %s,%s"%(op.dst, self.staticname(op.src)))
-            elif isinstance(op.src, AST.IntConst):
+            elif isinstance(op.src, LIT):
                 assert op.dst.size <= op.src.size, op
                 self.text.append("\tLD %s,%d"%(op.dst, op.src.value))
             else:
@@ -169,7 +170,7 @@ class FunctionGenerator(Generator):
                     self.text.append("\tADD %s,%s"%(op.dst, op.src))
                 else:
                     raise NotImplementedError(op)
-            elif isinstance(op.src, AST.IntConst):
+            elif isinstance(op.src, LIT):
                 assert op.dst.size == op.src.size, op
                 if op.src.value == 1:
                     self.text.append("\tINC %s"%(op.dst,))
@@ -278,7 +279,7 @@ class GlobalGenerator(Generator):
             else:
                 self.data.append(".globl %s ; %s"%(name,typ))
                 self.data.append("%s:"%(name,))
-                if isinstance(init, AST.IntConst):
+                if isinstance(init, LIT):
                     if not typ.compat(init.typ):
                         raise GenError("Literal", init, "doesn't match type", typ, "of", name)
                     if size == 1:

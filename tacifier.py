@@ -34,6 +34,16 @@ class TACifier(object):
                 raise TACError("Tried to rename(%s, %s, %s)"%(self, dst, src))
         def __repr__(self):
             return 'TACStructDef(%s, %s)'%(self.tag, self.defn)
+    class TACEnumDef(TACStatement):
+        def __init__(self, tag, typ, defn):
+            self.tag = tag
+            self.typ = typ
+            self.defn = defn
+        def rename(self, dst, src):
+            if self.tag == dst:
+                raise TACError("Tried to rename(%s, %s, %s)"%(self, dst, src))
+        def __repr__(self):
+            return 'TACEnumDef(%s, %s, %s)'%(self.tag, self.typ, self.defn)
     class TACRename(TACStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -240,6 +250,7 @@ class TACifier(object):
         self.strings = {}
         self.gennum = 0
         self.structs = {}
+        self.enums = {}
     def arg_list(self, arglist):
         scope = {}
         for arg in arglist:
@@ -257,6 +268,12 @@ class TACifier(object):
             if decl.name == member:
                 return decl.typ
         raise TACError("Tried to get non-existent member", member, "of struct", styp.tag)
+    def get_enum_type(self, name):
+        for e,d in self.enums.items():
+            for (n, v) in d.defn:
+                if n == name:
+                    return e
+        raise TACError("Tried to get non-existent enum constant", name)
     def get_lvalue(self, lval):
         if isinstance(lval, AST.Identifier):
             for scope in reversed(self.scopes):
@@ -273,6 +290,7 @@ class TACifier(object):
                 typ = pointer.typ.target
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
+                pre.append(self.TACDeref(sym, pointer.name))
                 post = [self.TACWrite(pointer.name, sym)]
                 if isinstance(pointer.name, self.Gensym): # no-one but us has a reference to it
                     post.append(self.TACKill(pointer.name))
@@ -296,6 +314,34 @@ class TACifier(object):
                     del self.scopes[-1][target.name]
                 return (self.Identifier(typ, sym), pre, post)
             raise NotImplementedError(lval)
+        if isinstance(lval, AST.SubscriptExpr):
+            target, tp = self.walk_expr(lval.target)
+            if isinstance(target.typ, AST.Pointer):
+                etyp = target.typ.target
+            elif isinstance(target.typ, AST.Array):
+                etyp = target.typ.type
+            else:
+                raise TACError("Subscripting non-pointerish", lval.target)
+            subscript, sp = self.walk_expr(lval.subscript)
+            if not AST.Word().compat(subscript.typ):
+                raise TACError("Subscript is not integer", lval.subscript)
+            pre = tp + sp
+            psym = self.gensym()
+            ptyp = AST.Pointer.make(etyp)
+            self.scopes[-1][psym] = (AST.Auto, ptyp)
+            pre.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
+            pre.append(self.TACAssign(psym, target.name))
+            pre.append(self.TACAdd(psym, subscript.name))
+            sym = self.gensym()
+            self.scopes[-1][sym] = (AST.Auto, etyp)
+            pre.insert(0, self.TACDeclare(sym, AST.Auto, etyp))
+            pre.append(self.TACDeref(sym, psym))
+            post = [self.TACWrite(psym, sym),
+                    self.TACKill(psym)]
+            if isinstance(target.name, self.Gensym): # no-one but us has a reference to it
+                post.append(self.TACKill(target.name))
+                del self.scopes[-1][target.name]
+            return (self.Identifier(etyp, sym), pre, post)
         raise NotImplementedError(lval)
     def get_rvalue(self, rval):
         # TODO check if returning an Array; if so, decay it to a pointer by taking its address
@@ -320,6 +366,9 @@ class TACifier(object):
             stmts.append(self.TACDeclare(string, AST.Static, styp))
             stmts.append(self.TACAddress(sym, string))
             return (self.Identifier(typ, sym), stmts)
+        if isinstance(rval, AST.EnumConst):
+            typ = self.get_enum_type(rval.name)
+            return (self.Identifier(typ, rval), [])
         raise UnhandledEntity(rval)
     def emit_assignish(self, op, lvalue, rvalue, killr=False):
         if not isinstance(lvalue, self.Identifier):
@@ -382,6 +431,15 @@ class TACifier(object):
                     stmts.append(self.TACKill(pointer.name))
                     del self.scopes[-1][pointer.name]
                 return (self.Identifier(typ, sym), stmts)
+            if expr.op == '&':
+                target, pre = self.walk_expr(expr.arg)
+                sym = self.gensym()
+                typ = AST.Pointer.make(target.typ)
+                self.scopes[-1][sym] = (AST.Auto, typ)
+                stmts = pre
+                stmts.append(self.TACDeclare(sym, AST.Auto, typ))
+                stmts.append(self.TACAddress(sym, target.name))
+                return (self.Identifier(typ, sym), stmts)
             raise UnhandledEntity(expr)
         if isinstance(expr, AST.PostcremExpr):
             if expr.op == '++':
@@ -432,14 +490,48 @@ class TACifier(object):
                     del self.scopes[-1][target.name]
                 return (self.Identifier(typ, sym), pre)
             raise NotImplementedError(lval)
-        raise UnhandledEntity(expr)
-        if isinstance(expr, PAR.Comparison):
+        if isinstance(expr, AST.RelationExpr):
             left, ls = self.walk_expr(expr.left)
             right, rs = self.walk_expr(expr.right)
             sym = self.gensym() # either use in a conditional context, or assign (really Rename) to a variable
-            typ = PAR.ValueOfType('bool')
-            return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, LEX.Auto('auto'), typ),
+            typ = AST.Bool()
+            return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, AST.Auto, typ),
                                                           self.TACCompare(sym, expr.op, left.name, right.name)])
+        if isinstance(expr, AST.SubscriptExpr):
+            target, tp = self.walk_expr(expr.target)
+            if isinstance(target.typ, AST.Pointer):
+                etyp = target.typ.target
+            elif isinstance(target.typ, AST.Array):
+                etyp = target.typ.type
+            else:
+                raise TACError("Subscripting non-pointerish", expr.target)
+            subscript, sp = self.walk_expr(expr.subscript)
+            styp = subscript.typ
+            if isinstance(styp, AST.Enum):
+                if styp.typ is None:
+                    if styp.tag not in self.enums:
+                        raise TACError("Subscripting with incomplete enum", styp.tag)
+                    styp = self.enums[subscript.typ.tag].typ
+                else:
+                    styp = styp.typ
+            if not AST.Word().compat(styp):
+                raise TACError("Subscript is not integer", expr.subscript)
+            stmts = tp + sp
+            psym = self.gensym()
+            ptyp = AST.Pointer.make(etyp)
+            self.scopes[-1][psym] = (AST.Auto, ptyp)
+            stmts.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
+            stmts.append(self.TACAssign(psym, target.name))
+            stmts.append(self.TACAdd(psym, subscript.name))
+            sym = self.gensym()
+            self.scopes[-1][sym] = (AST.Auto, etyp)
+            stmts.insert(0, self.TACDeclare(sym, AST.Auto, etyp))
+            stmts.append(self.TACDeref(sym, psym))
+            if isinstance(target.name, self.Gensym): # no-one but us has a reference to it
+                stmts.append(self.TACKill(target.name))
+                del self.scopes[-1][target.name]
+            return (self.Identifier(etyp, sym), stmts)
+        raise UnhandledEntity(expr)
         if isinstance(expr, PAR.FunctionCall):
             func, fs = self.walk_expr(expr.func)
             if not isinstance(func.typ, PAR.FunctionDecl):
@@ -529,6 +621,8 @@ class TACifier(object):
             typ = declaration.typ
             if isinstance(typ, AST.Struct):
                 func.extend(self.declare_struct(typ.tag, typ.body))
+            elif isinstance(typ, AST.Enum):
+                struct.extend(self.declare_enum(typ.tag, typ.typ, typ.body))
             try:
                 for d in declaration.declarations:
                     func.extend(self.declare(d))
@@ -570,6 +664,8 @@ class TACifier(object):
                 typ = declaration.typ
                 if isinstance(typ, AST.Struct):
                     struct.extend(self.declare_struct(typ.tag, typ.body))
+                elif isinstance(typ, AST.Enum):
+                    struct.extend(self.declare_enum(typ.tag, typ.typ, typ.body))
                 try:
                     for d in declaration.declarations:
                         struct.extend(self.declare(d))
@@ -581,6 +677,25 @@ class TACifier(object):
             return [self.structs[tag]]
         else:
             raise TACError("struct %s redefined"%(tag,))
+    def declare_enum(self, tag, typ, body):
+        if body is None:
+            self.enums.setdefault(tag, None)
+            return []
+        elif self.enums.get(tag) is None:
+            enum = []
+            self.scopes.append({})
+            for value in body:
+                en = value.name
+                ev = value.value
+                if ev is None:
+                    enum.append((en, None))
+                else:
+                    enum.append((en, self.walk_expr(ev)))
+            self.scopes.pop(-1)
+            self.enums[tag] = self.TACEnumDef(tag, typ, enum)
+            return [self.enums[tag]]
+        else:
+            raise TACError("enum %s redefined"%(tag,))
     def add(self, decl):
         code = self.functions[self.in_func]
         if isinstance(decl, AST.Declare):
@@ -588,6 +703,11 @@ class TACifier(object):
                 body = decl.typ.body
                 tag = decl.typ.tag
                 code.extend(self.declare_struct(tag, body))
+            elif isinstance(decl.typ, AST.Enum):
+                body = decl.typ.body
+                typ = decl.typ.typ
+                tag = decl.typ.tag
+                code.extend(self.declare_enum(tag, typ, body))
             for d in decl.declarations:
                 code.extend(self.declare(d))
             return
@@ -629,6 +749,8 @@ class TACifier(object):
         pprint.pprint(self.strings)
         print "TAC structs:"
         pprint.pprint(self.structs)
+        print "TAC enums:"
+        pprint.pprint(self.enums)
 
 ## Entry point
 def tacify(ast):

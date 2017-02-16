@@ -40,9 +40,11 @@ class Parser(object):
              OGroup(struct_body, "body")
     enum_const = (Suppress(Literal('$')) + identifier("name"))
     assign_expr = Forward().setName("assign_expr")
+    integer_type = Keyor('byte', 'word')
     enum_defn = enum_const +\
                 Optional(Suppress(Literal('=')) + Group(assign_expr)("value"))
-    enum_body = Suppress(Literal('{')) + delimitedList(Group(enum_defn)) +\
+    enum_body = Group(integer_type)("type") + Suppress(Literal('{')) +\
+                Group(delimitedList(Group(enum_defn)))("values") +\
                 Suppress(Optional(Literal(','))) + Suppress(Literal('}'))
     enum = Suppress(Keyword('enum')) + identifier("etag") +\
            OGroup(enum_body, "body")
