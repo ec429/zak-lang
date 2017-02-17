@@ -584,6 +584,8 @@ class Allocator(object):
                 self.fill(ix, name)
         return ix
     def tac_to_rtl(self, t):
+        def kill_p(sym):
+            return isinstance(sym, TAC.Gensym)
         if isinstance(t, TAC.TACDeclare): return
         if isinstance(t, TAC.TACAssign):
             if t.dst not in self.names:
@@ -598,7 +600,7 @@ class Allocator(object):
                         r = self.choose_byte_register()
                         r.claim(t.dst)
                     else: # just rename it
-                        if t.kills:
+                        if kill_p(t.src):
                             self.kill(t.src)
                         else:
                             self.spill(s)
@@ -607,7 +609,7 @@ class Allocator(object):
                         return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
-                if t.kills:
+                if kill_p(t.src):
                     self.kill(t.src)
                 return
             elif size == 2:
@@ -618,7 +620,7 @@ class Allocator(object):
                         r = self.choose_word_register()
                         r.claim(t.dst)
                     else: # just rename it
-                        if t.kills:
+                        if kill_p(t.src):
                             self.kill(t.src)
                         self.spill(s)
                         s.claim(t.dst)
@@ -626,7 +628,7 @@ class Allocator(object):
                         return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
-                if t.kills:
+                if kill_p(t.src):
                     self.kill(t.src)
                 return
             else:
@@ -658,7 +660,7 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(a, r))
                 a.dirty()
                 a.unlock()
-                if t.kills:
+                if kill_p(t.src):
                     self.kill(t.src)
                 return
             elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
@@ -683,7 +685,7 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(hl, r))
                 hl.dirty()
                 hl.unlock()
-                if t.kills:
+                if kill_p(t.src):
                     self.kill(t.src)
                 return
             else:
@@ -954,10 +956,6 @@ class Allocator(object):
             # spill all registers
             self.clobber_registers()
             self.code.append(self.RTLJump(self.wraplabel(t.label)))
-            return
-        if isinstance(t, TAC.TACKill):
-            # any register containing it is no longer live
-            self.kill(t.name)
             return
         if isinstance(t, TAC.TACMemberRead):
             if t.src not in self.names:
