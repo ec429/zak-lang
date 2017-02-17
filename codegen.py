@@ -55,7 +55,7 @@ class FunctionGenerator(Generator):
                     raise GenError(size)
             elif isinstance(op.name, LIT):
                 # if it's a word register, it auto-promotes the literal
-                assert op.reg.size <= op.name.size, op
+                assert op.reg.size >= op.name.size
                 self.text.append("\tLD %s,%d"%(op.reg, op.name.value))
             else:
                 if op.reg.name == 'A':
@@ -98,6 +98,11 @@ class FunctionGenerator(Generator):
             assert op.src.size == 2, op
             if op.dst.size == 1:
                 self.text.append("\tLD %s,(%s)"%(op.dst, op.src))
+            elif op.dst.size == 2:
+                self.text.append("\tLD %s,(%s)"%(op.dst.lo, op.src))
+                self.text.append("\tINC %s"%(op.src,))
+                self.text.append("\tLD %s,(%s)"%(op.dst.hi, op.src))
+                self.text.append("\tDEC %s"%(op.src,))
             else:
                 raise NotImplementedError(op.dst.size)
         elif isinstance(op, RTL.RTLWrite):
@@ -137,12 +142,16 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLMove):
             assert isinstance(op.dst, REG), op
             if isinstance(op.src, REG):
-                assert op.dst.size == op.src.size, op
+                assert op.dst.size >= op.src.size, op
                 if op.dst.size == 1:
                     self.text.append("\tLD %s,%s"%(op.dst, op.src))
                 elif op.dst.size == 2:
-                    self.text.append("\tPUSH %s"%(op.src,))
-                    self.text.append("\tPOP %s"%(op.dst,))
+                    if op.src.size == 1:
+                        self.text.append("\tLD %s,0"%(op.dst.hi,))
+                        self.text.append("\tLD %s,%s"%(op.dst.lo, op.src))
+                    else:
+                        self.text.append("\tPUSH %s"%(op.src,))
+                        self.text.append("\tPOP %s"%(op.dst,))
                 else:
                     raise GenError(op.dst.size)
             elif isinstance(op.src, TAC.Gensym):
