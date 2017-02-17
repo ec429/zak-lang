@@ -231,6 +231,13 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLExchange(%s, %s)'%(self.dst, self.src)
+    class RTLAddress(RTLStatement):
+        # For auto (stack) values.  static ones can be addressed statically
+        def __init__(self, dst, src):
+            self.dst = dst
+            self.src = src
+        def __repr__(self):
+            return 'RTLAddress(%s, %s)'%(self.dst, self.src)
     class RTLDeref(RTLStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -322,6 +329,8 @@ class Allocator(object):
                     if c.name == name: return c
         raise AllocError("No such register", name)
     def sizeof(self, typ):
+        # Discard any qualifiers
+        typ = typ.unqualified()
         if typ.fixed_size is not None:
             return typ.fixed_size
         if isinstance(typ, AST.Struct):
@@ -623,17 +632,20 @@ class Allocator(object):
             else:
                 raise AllocError("Tried to move an aggregate, size = %d"%(size,))
         if isinstance(t, TAC.TACAddress):
+            r = self.reg_find_word(t.dst)
+            if r is None:
+                r = self.choose_word_register()
+                r.claim(t.dst)
             if self.is_on_stack(t.src):
-                raise NotImplementedError(t)
+                # its address has been taken, it must have backing storage
+                sp, typ, size, filled, spilled = self.stack[t.src]
+                self.stack[t.src] = sp, typ, size, True, True
+                self.code.append(self.RTLAddress(r, t.src))
             else:
                 # it's static
-                r = self.reg_find_word(t.dst)
-                if r is None:
-                    r = self.choose_word_register()
-                    r.claim(t.dst)
                 self.code.append(self.RTLMove(r, t.src))
-                r.dirty()
-                return
+            r.dirty()
+            return
         if isinstance(t, TAC.TACAdd):
             if t.dst not in self.names:
                 raise AllocError("Name not found", t.dst)
@@ -696,6 +708,16 @@ class Allocator(object):
                             self.move(a, r)
                         else:
                             self.fill(a, t.src)
+                elif size == 2: # return in HL
+                    hl = self.register('HL')
+                    if hl.user != t.src:
+                        if not hl.available:
+                            self.spill(hl)
+                        r = self.reg_find_word(t.src)
+                        if r:
+                            self.move(hl, r)
+                        else:
+                            self.fill(hl, t.src)
                 else:
                     raise NotImplementedError(size)
             # Spill all dirty (non-local) variables before function return

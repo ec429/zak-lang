@@ -327,7 +327,7 @@ class TACifier(object):
                 raise TACError("Subscript is not integer", lval.subscript)
             pre = tp + sp
             psym = self.gensym()
-            ptyp = AST.Pointer.make(etyp)
+            ptyp = AST.Pointer(etyp)
             self.scopes[-1][psym] = (AST.Auto, ptyp)
             pre.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
             pre.append(self.TACAssign(psym, target.name))
@@ -357,12 +357,13 @@ class TACifier(object):
             return (self.FlagIdent(rval.flag), [])
         if isinstance(rval, AST.StringLiteral):
             sym = self.gensym()
-            typ = AST.Pointer.make(AST.Byte(), 'const')
+            typ = AST.Pointer(AST.Const(AST.Byte()))
             self.scopes[-1][sym] = (AST.Auto, typ)
             stmts = [self.TACDeclare(sym, AST.Auto, typ)]
             string = self.gensym()
             self.strings[string] = rval.text
-            styp = AST.Array.make(AST.Byte(), len(rval.text) + 1)
+            l = len(rval.text) + 1
+            styp = AST.Array(AST.IntConst(l, True), AST.Const(AST.Byte()))
             stmts.append(self.TACDeclare(string, AST.Static, styp))
             stmts.append(self.TACAddress(sym, string))
             return (self.Identifier(typ, sym), stmts)
@@ -432,9 +433,23 @@ class TACifier(object):
                     del self.scopes[-1][pointer.name]
                 return (self.Identifier(typ, sym), stmts)
             if expr.op == '&':
+                if isinstance(expr.arg, AST.Identifier):
+                    target, _ = self.get_rvalue(expr)
+                    sym = self.gensym()
+                    typ = AST.Pointer(target.typ)
+                    self.scopes[-1][sym] = (AST.Auto, typ)
+                    stmts = [self.TACDeclare(sym, AST.Auto, typ),
+                             self.TACAddress(sym, target.name)]
+                    return (self.Identifier(typ, sym), stmts)
+                if isinstance(expr.arg, AST.SubscriptExpr):
+                    # &A[B] ==> A + B
+                    #return self.walk_expr(AST.AdditiveExpr...)
+                    pass
+                raise UnhandledEntity(expr)
+                # XXX here is some code.  It's wrong, because &arr[i].  We don't want an rvalue, we want an address dammit
                 target, pre = self.walk_expr(expr.arg)
                 sym = self.gensym()
-                typ = AST.Pointer.make(target.typ)
+                typ = AST.Pointer(target.typ)
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 stmts = pre
                 stmts.append(self.TACDeclare(sym, AST.Auto, typ))
@@ -518,7 +533,7 @@ class TACifier(object):
                 raise TACError("Subscript is not integer", expr.subscript)
             stmts = tp + sp
             psym = self.gensym()
-            ptyp = AST.Pointer.make(etyp)
+            ptyp = AST.Pointer(etyp)
             self.scopes[-1][psym] = (AST.Auto, ptyp)
             stmts.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
             stmts.append(self.TACAssign(psym, target.name))

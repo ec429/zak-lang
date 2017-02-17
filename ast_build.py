@@ -18,12 +18,31 @@ class UnhandledEntity(ASTError):
 class Type(object):
     fixed_size = None
     def compat(self, other):
-        return NotImplemented
+        raise NotImplementedError(self, other)
     @classmethod
-    def make(cls, *args):
-        raise NotImplementedError()
+    def build(cls, *args):
+        raise NotImplementedError(cls, *args)
     def __repr__(self):
         return str(self)
+    def qualifiers(self):
+        return set()
+    def unqualified(self):
+        return self
+
+class Qualified(Type):
+    qualifier = None
+    def __init__(self, typ):
+        self.typ = typ
+    def __str__(self):
+        return '%s %s'%(self.qualifier, self.typ)
+    def qualifiers(self):
+        return set(self.qualifier) | self.typ.qualifiers()
+    def unqualified(self):
+        return self.typ
+class Const(Qualified):
+    qualifier = 'const'
+class Volatile(Qualified):
+    qualifier = 'volatile'
 
 class PrimitiveType(Type):
     name = None
@@ -42,7 +61,7 @@ class Byte(PrimitiveType):
     fixed_size = 1
     @classmethod
     def make(cls, val):
-        return IntConst({'dec': str(val)})
+        return IntConst(val, False)
 class Word(PrimitiveType):
     name = 'word'
     fixed_size = 2
@@ -50,14 +69,19 @@ class Word(PrimitiveType):
         return isinstance(other, (Byte, Word))
     @classmethod
     def make(cls, val):
-        return IntConst({'dec': str(val), 'long': True})
+        return IntConst(val, True)
 
 class Struct(Type):
-    def __init__(self, struct):
-        self.tag = struct['stag']
-        self.body = struct.get('body')
-        if self.body is not None:
-            self.body = [Declare(d) for d in self.body]
+    def __init__(self, tag, body):
+        self.tag = tag
+        self.body = body
+    @classmethod
+    def build(cls, struct):
+        body = struct.get('body')
+        if body is not None:
+            body = [Declare(d) for d in body]
+        return cls(struct['stag'],
+                   body)
     def __str__(self):
         body = ''
         if self.body is not None:
@@ -67,24 +91,33 @@ class Struct(Type):
         return isinstance(other, Struct) and self.tag == other.tag
 
 class EnumValue(object):
-    def __init__(self, ev):
-        self.name = ev['name']
-        self.value = ev.get('value')
-        if self.value is not None:
-            self.value = DoAssign(self.value)
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+    @classmethod
+    def build(cls, ev):
+        value = ev.get('value')
+        if value is not None:
+            value = DoAssign(value)
+        return cls(ev['name'], value)
     def __str__(self):
         if self.value is None:
             return '$%s' % (self.name,)
         return '$%s = %s' % (self.name, self.value)
 
 class Enum(Type):
-    def __init__(self, enum):
-        self.tag = enum['etag']
-        self.body = enum.get('body')
-        self.typ = None
-        if self.body is not None:
-            self.typ = get_type(self.body['type'])
-            self.body = [EnumValue(e) for e in self.body['values']]
+    def __init__(self, tag, body, typ):
+        self.tag = tag
+        self.body = body
+        self.typ = typ
+    @classmethod
+    def build(self, enum):
+        body = enum.get('body')
+        typ = None
+        if body is not None:
+            typ = get_type(body['type'])
+            body = [EnumValue.build(e) for e in body['values']]
+        return cls(enum['etag'], body, typ)
     def __str__(self):
         body = ''
         if self.body is not None:
@@ -103,9 +136,9 @@ def get_type(typ):
     if typ.get('word') is not None:
         return Word()
     if typ.get('struct') is not None:
-        return Struct(typ['struct'])
+        return Struct.build(typ['struct'])
     if typ.get('enum') is not None:
-        return Enum(typ['enum'])
+        return Enum.build(typ['enum'])
 
 class StorageClass(object):
     def __init__(self, sc):
@@ -145,9 +178,13 @@ def Param(param):
     return DeclIdentifier(None, typ)
 
 class Function(Type):
-    def __init__(self, ftail, ret):
+    def __init__(self, params, ret):
+        self.params = params
         self.ret = ret
-        self.params = [Param(p) for p in ftail['params']]
+    @classmethod
+    def build(cls, ftail, ret):
+        return cls([Param(p) for p in ftail['params']],
+                   ret)
     def __str__(self):
         def pstr(p):
             if p.ident is not None:
@@ -157,14 +194,14 @@ class Function(Type):
                                         self.ret)
 
 class Array(Type):
-    def __init__(self, atail, etyp):
+    def __init__(self, dim, etyp):
+        self.dim = dim
         self.type = etyp
-        self.dim = DoExpression(atail['dimension'])
+    @classmethod
+    def build(cls, atail, etyp):
+        return cls(DoExpression(atail['dimension']), etyp)
     def __str__(self):
         return 'array [%s] of %s' % (self.dim, self.type)
-    @classmethod
-    def make(cls, etyp, dim):
-        return cls({'dimension': make_int(dim)}, etyp)
 
 def DirectDecl(direct_decl, typ):
     # <direct-decl>   ::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
@@ -172,12 +209,12 @@ def DirectDecl(direct_decl, typ):
     if tail is not None:
         for tail_part in reversed(tail):
             if tail_part.get('function') is not None:
-                typ = Function(tail_part['function'], typ)
+                typ = Function.build(tail_part['function'], typ)
             if tail_part.get('array') is not None:
-                typ = Array(tail_part['array'], typ)
+                typ = Array.build(tail_part['array'], typ)
     pointer = direct_decl.get('pointer')
     if pointer is not None:
-        typ = Pointer(pointer, typ)
+        typ = Pointer.build(pointer, typ)
     if direct_decl.get('direct_decl') is not None:
         if direct_decl.get('identifier') is not None:
             raise UnhandledEntity(direct_decl)
@@ -187,27 +224,31 @@ def DirectDecl(direct_decl, typ):
 class Pointer(Type):
     fixed_size = 2
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
-    def __init__(self, pointer, target):
-        # TODO this is wrong, we should Qualify(target)
-        self.qualifiers = pointer.get('qualifier_list', {}).keys()
-        if pointer.get('pointer') is not None:
-            target = Pointer(pointer['pointer'], target)
+    def __init__(self, target):
         self.target = target
+    @classmethod
+    def build(cls, pointer, target):
+        if pointer.get('qualifier_list') is not None:
+            raise UnhandledEntity(pointer['qualifier_list'])
+        if pointer.get('pointer') is not None:
+            target = Pointer.build(pointer['pointer'], target)
+        return cls(target)
     def __str__(self):
         return 'Pointer(%s)'%(self.target,)
-    @classmethod
-    def make(cls, pointee, *qualifiers):
-        d = {}
-        if qualifiers:
-            d['qualifier_list'] = {k: [] for k in qualifiers}
-        return cls(d, pointee)
+    def compat(self, other):
+        if isinstance(other, Array):
+            raise UnhandledEntity(other)
+        if isinstance(other, Pointer):
+            return self.target.unqualified().compat(other.target.unqualified()) and \
+                   self.target.qualifiers() >= other.target.qualifiers()
+        return False
 
 class DeclSpec(object):
     def __init__(self, decl_spec, typ):
         # <decl-spec>    ::= <pointer>? <direct-decl>
         pointer = decl_spec.get('pointer')
         if pointer is not None:
-            typ = Pointer(pointer, typ)
+            typ = Pointer.build(pointer, typ)
         if decl_spec.get('direct_decl') is None:
             direct_decl = DeclIdentifier(None, typ)
         else:
@@ -220,144 +261,176 @@ class DeclSpec(object):
     def __str__(self):
         return '%s as %s'%(self.ident, self.object)
 
-def make_int(val, long=False):
-    d = {'dec': '%d' % (val,)}
-    if long:
-        d['long'] = []
-    return {'constant': {'int_const': d}}
-
 class IntConst(object):
-    def __init__(self, expr):
-        if expr.get('dec') is not None:
-            self.value = int(expr['dec'][0], 10)
-        elif expr.get('hex') is not None:
-            self.value = int(expr['hex'][0], 16)
-        elif expr.get('oct') is not None:
-            self.value = int(expr['oct'][0], 8)
-        else:
-            raise UnhandledEntity(expr)
-        self.long = expr.get('long') is not None
+    def __init__(self, value, long):
+        self.value = value
+        self.long = long
         self.typ = Word() if self.long else Byte()
         self.size = self.typ.fixed_size
+    @classmethod
+    def build(cls, expr):
+        if expr.get('dec') is not None:
+            value = int(expr['dec'][0], 10)
+        elif expr.get('hex') is not None:
+            value = int(expr['hex'][0], 16)
+        elif expr.get('oct') is not None:
+            value = int(expr['oct'][0], 8)
+        else:
+            raise UnhandledEntity(expr)
+        return cls(value, expr.get('long') is not None)
     def __str__(self):
         return str(self.value) + ('l' if self.long else '')
 
 class EnumConst(object):
-    def __init__(self, expr):
-        self.name = expr['name']
+    def __init__(self, name):
+        self.name = name
+    @classmethod
+    def build(cls, expr):
+        return cls(expr['name'])
     def __str__(self):
         return '$%s' % (self.name,)
 
-def Constant(expr):
+def DoConstant(expr):
     if expr.get('int_const') is not None:
-        return IntConst(expr['int_const'])
+        return IntConst.build(expr['int_const'])
     if expr.get('enum_const') is not None:
-        return EnumConst(expr['enum_const'])
+        return EnumConst.build(expr['enum_const'])
     if expr.get('char_const') is not None:
         raise UnhandledEntity(expr['char_const'])
     raise UnhandledEntity(expr)
 
 class StringLiteral(object):
-    def __init__(self, expr):
-        self.text = expr[0]
+    def __init__(self, text):
+        self.text = text
+    @classmethod
+    def build(cls, expr):
+        return cls(expr[0])
     def __str__(self):
         return repr(self.text)
 
 class Identifier(object):
     def __init__(self, ident):
-        self.ident = ident[0]
+        self.ident = ident
+    @classmethod
+    def build(cls, expr):
+        return cls(expr[0])
     def __str__(self):
         return self.ident
     def __repr__(self):
         return '%s(%s)' % (self.__class__.__name__, self)
 
 class FlagIdent(object):
-    def __init__(self, expr):
-        self.flag = expr[0]
+    def __init__(self, flag):
+        self.flag = flag
+    @classmethod
+    def build(cls, expr):
+        return cls(expr[0])
     def __str__(self):
         return '# %s' % (self.flag)
 
 def DoPrimary(expr):
     if expr.get('identifier') is not None:
-        return Identifier(expr['identifier'])
+        return Identifier.build(expr['identifier'])
     if expr.get('constant') is not None:
-        return Constant(expr['constant'])
+        return DoConstant(expr['constant'])
     if expr.get('string_literal') is not None:
-        return StringLiteral(expr['string_literal'])
+        return StringLiteral.build(expr['string_literal'])
     if expr.get('flag_ident') is not None:
-        return FlagIdent(expr['flag_ident'])
+        return FlagIdent.build(expr['flag_ident'])
     if expr.get('paren_expr') is not None:
         raise UnhandledEntity(expr['paren_expr'])
     raise UnhandledEntity(expr)
 
 class PostcremExpr(object):
-    def __init__(self, expr, target):
-        self.op = expr['op']
+    def __init__(self, op, target):
+        self.op = op
         self.target = target
+    @classmethod
+    def build(cls, expr, target):
+        return cls(expr['op'], target)
     def __str__(self):
         return 'PostcremExpr(%s %s)' % (self.target, self.op)
 
 class MemberExpr(object):
-    def __init__(self, expr, target):
-        self.op = expr['op']
-        self.tag = expr['tag']
+    def __init__(self, op, tag, target):
+        self.op = op
+        self.tag = tag
         self.target = target
+    @classmethod
+    def build(cls, expr, target):
+        return cls(expr['op'], expr['tag'], target)
     def __str__(self):
         return 'MemberExpr(%s %s %s)' % (self.target, self.op, self.tag)
 
 class FuncallExpr(object):
-    def __init__(self, expr, target):
-        self.args = [DoAssign(a) for a in expr['arg_list']]
+    def __init__(self, args, target):
+        self.args = args
         self.target = target
+    @classmethod
+    def build(cls, expr, target):
+        return cls([DoAssign(a) for a in expr['arg_list']],
+                   target)
     def __str__(self):
         return 'FuncallExpr(%s)' % (' '.join(map(str, [self.target] + self.args)),)
 
 class SubscriptExpr(object):
-    def __init__(self, expr, target):
-        self.subscript = DoExpression(expr['subscript'])
+    def __init__(self, subscript, target):
+        self.subscript = subscript
         self.target = target
+    @classmethod
+    def build(cls, expr, target):
+        return cls(DoExpression(expr['subscript']),
+                   target)
     def __str__(self):
         return 'SubscriptExpr(%s %s)' % (self.target, self.subscript)
 
-def PostfixExpr(expr, target):
+def DoPostfixPart(expr, target):
     if expr.get('subscript_tail') is not None:
-        return SubscriptExpr(expr['subscript_tail'], target)
+        return SubscriptExpr.build(expr['subscript_tail'], target)
     if expr.get('funcall_tail') is not None:
-        return FuncallExpr(expr['funcall_tail'], target)
+        return FuncallExpr.build(expr['funcall_tail'], target)
     if expr.get('postcrem_tail') is not None:
-        return PostcremExpr(expr['postcrem_tail'], target)
+        return PostcremExpr.build(expr['postcrem_tail'], target)
     if expr.get('member_tail') is not None:
-        return MemberExpr(expr['member_tail'], target)
+        return MemberExpr.build(expr['member_tail'], target)
     raise UnhandledEntity(expr)
 
 def DoPostfix(expr):
     if expr.get('postfix_tail') is not None:
         target = DoPrimary(expr['primary_expr'])
         for tail_part in expr['postfix_tail']:
-            target = PostfixExpr(tail_part, target)
+            target = DoPostfixPart(tail_part, target)
         return target
     return DoPrimary(expr)
 
 class UnaryExpr(object):
     # <unary-op> <cast-expr>
-    def __init__(self, expr):
-        self.op = expr['op']
-        self.arg = DoCast(expr['arg'])
+    def __init__(self, op, arg):
+        self.op = op
+        self.arg = arg
+    @classmethod
+    def build(cls, expr):
+        return cls(expr['op'],
+                   DoCast(expr['arg']))
     def __str__(self):
         return 'UnaryExpr(%s %s)'%(self.op, self.arg)
 
 class PrecremExpr(object):
-    def __init__(self, expr):
-        self.op = expr['op']
-        self.arg = DoUnary(expr['arg'])
+    def __init__(self, op, arg):
+        self.op = op
+        self.arg = arg
+    @classmethod
+    def build(cls, expr):
+        return cls(expr['op'],
+                   DoUnary(expr['arg']))
     def __str__(self):
         return 'PrecremExpr(%s %s)' % (self.op, self.arg)
 
 def DoUnary(expr):
     if expr.get('precrem_expr') is not None:
-        return PrecremExpr(expr['precrem_expr'])
+        return PrecremExpr.build(expr['precrem_expr'])
     if expr.get('unary_expr') is not None:
-        return UnaryExpr(expr['unary_expr'])
+        return UnaryExpr.build(expr['unary_expr'])
     if expr.get('sizeof_expr') is not None:
         raise UnhandledEntity(expr['sizeof_expr'])
     return DoPostfix(expr);
@@ -368,6 +441,13 @@ def DoCast(expr):
     return DoUnary(expr)
 
 class BinaryExpr(object):
+    def __init__(self, left, op, right):
+        self.left = left
+        self.op = op
+        self.right = right
+    @classmethod
+    def build(cls, expr):
+        raise NotImplementedError()
     def __str__(self):
         return '%s(%s %s %s)'%(self.__class__.__name__,
                                self.left, self.op, self.right)
@@ -382,32 +462,41 @@ def DoBitwise(expr):
         raise UnhandledEntity(expr['do_bitwise'])
     return DoShift(expr)
 
+class AdditiveExpr(BinaryExpr):
+    @classmethod
+    def build(cls, expr):
+        return cls(DoBitwise(expr['left']),
+                   expr['op'],
+                   DoAdditive(expr['right']))
+
 def DoAdditive(expr):
     if expr.get('do_additive') is not None:
-        raise UnhandledEntity(expr['do_additive'])
+        return AdditiveExpr.build(expr['do_additive'])
     return DoBitwise(expr)
 
 class RelationExpr(BinaryExpr):
-    def __init__(self, expr):
-        self.left = DoAdditive(expr['left'])
-        self.op = expr['op']
-        self.right = DoAdditive(expr['right'])
+    @classmethod
+    def build(cls, expr):
+        return cls(DoAdditive(expr['left']),
+                   expr['op'],
+                   DoAdditive(expr['right']))
 
 def DoRelation(expr):
     if expr.get('do_relation') is not None:
-        return RelationExpr(expr['do_relation'])
+        return RelationExpr.build(expr['do_relation'])
     return DoAdditive(expr)
 
 class EqualityExpr(BinaryExpr):
-    def __init__(self, expr):
-        self.left = DoRelation(expr['left'])
-        self.op = expr['op']
-        self.right = DoEquality(expr['right'])
+    @classmethod
+    def build(cls, expr):
+        return cls(DoRelation(expr['left']),
+                   expr['op'],
+                   DoEquality(expr['right']))
 
 def DoEquality(expr):
     # <equality-expr> ::= <relation-expr> | <relation-expr> ('==' | '!=') <equality-expr>
     if expr.get('do_equality') is not None:
-        return EqualityExpr(expr['do_equality'])
+        return EqualityExpr.build(expr['do_equality'])
     return DoRelation(expr)
 
 def DoAnd(expr):
@@ -427,15 +516,16 @@ def DoTernary(expr):
     return DoOr(expr)
 
 class AssignExpr(BinaryExpr):
-    def __init__(self, expr):
-        self.left = DoUnary(expr['left'])
-        self.op = expr['op']
-        self.right = DoAssign(expr['right'])
+    @classmethod
+    def build(cls, expr):
+        return cls(DoUnary(expr['left']),
+                   expr['op'],
+                   DoAssign(expr['right']))
 
 def DoAssign(expr):
     # <assign-expr>   ::= <ternary-expr> | <unary-expr> <assign-op> <assign-expr>
     if expr.get('do_assign') is not None:
-        return AssignExpr(expr['do_assign'])
+        return AssignExpr.build(expr['do_assign'])
     return DoTernary(expr)
 
 def DoExpression(expr):
@@ -521,11 +611,15 @@ class Declare(object):
                 self.sc = Auto
             else:
                 raise UnhandledEntity(self.sc)
-        if declare.get('qualifier_list') is not None:
-            raise UnhandledEntity(declare['qualifier_list'])
         self.typ = get_type(declare['type'])
         if self.typ is None:
             raise UnhandledEntity(declare['type'])
+        if declare.get('qualifier_list') is not None:
+            ql = declare['qualifier_list']
+            if ql.get('const') is not None:
+                self.typ = Const(self.typ)
+            if ql.get('volatile') is not None:
+                self.typ = Volatile(self.typ)
         # <declaration>   ::= <object-decls> ';' | <function-defn>
         # <object-decls>  ::= <object-decl> (',' <object-decls>)?
         self.declarations = [Declaration(d, self.sc, self.typ) for d in declare['declaration']]
