@@ -4,11 +4,16 @@ word s = 4l;
 
 byte proto(byte);
 
-/*byte sum(byte a, byte b)
+byte sum(byte a, byte b)
 {
 	a += b;
 	return a;
-}*/
+}
+
+byte sum2(byte a, byte b)
+{
+	return a + b;
+}
 
 byte sump(byte *a, byte *b)
 {
