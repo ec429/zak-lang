@@ -19,6 +19,15 @@ class Type(object):
     fixed_size = None
     def compat(self, other):
         raise NotImplementedError(self, other)
+    def common(self, other):
+        """Returns the appropriate common type for self and other.
+        Some subclasses will need to override this.
+
+        Check self.compat(other) before calling!"""
+        return self
+    def __eq__(self, other):
+        """Stricter than compat, this is used for pointee equality."""
+        raise NotImplementedError(self, other)
     @classmethod
     def build(cls, *args):
         raise NotImplementedError(cls, *args)
@@ -43,12 +52,21 @@ class Const(Qualified):
     qualifier = 'const'
 class Volatile(Qualified):
     qualifier = 'volatile'
+def get_qualifier(qual):
+    for q in [Const, Volatile]:
+        if qual == q.qualifier:
+            return q
+    raise ASTError("No such qualifier", qual)
 
 class PrimitiveType(Type):
     name = None
     def __str__(self):
         return self.name
     def compat(self, other):
+        if isinstance(other, Enum):
+            return self.compat(other.typ)
+        return self == other
+    def __eq__(self, other):
         return isinstance(other, PrimitiveType) and self.name == other.name
 class Void(PrimitiveType):
     name = 'void'
@@ -66,7 +84,9 @@ class Word(PrimitiveType):
     name = 'word'
     fixed_size = 2
     def compat(self, other):
-        return isinstance(other, (Byte, Word))
+        if Byte().compat(other):
+            return True
+        return super(Word, self).compat(other)
     @classmethod
     def make(cls, val):
         return IntConst(val, True)
@@ -87,8 +107,9 @@ class Struct(Type):
         if self.body is not None:
             body = ' '.join(map(str, [' {'] + self.body + ['}']))
         return 'struct %s%s' % (self.tag, body)
-    def compat(self, other):
+    def __eq__(self, other):
         return isinstance(other, Struct) and self.tag == other.tag
+    compat = __eq__
 
 class EnumValue(object):
     def __init__(self, name, value):
@@ -123,8 +144,9 @@ class Enum(Type):
         if self.body is not None:
             body = ' %s {%s}' % (self.typ, ', '.join(map(str, self.body)))
         return 'enum %s%s' % (self.tag, body)
-    def compat(self, other):
+    def __eq__(self, other):
         return isinstance(other, Enum) and self.tag == other.tag
+    compat = __eq__
 
 def get_type(typ):
     if typ.get('void') is not None:
@@ -192,6 +214,11 @@ class Function(Type):
             return str(p)
         return 'function [%s -> %s]' % (', '.join(map(pstr, self.params)),
                                         self.ret)
+    def __eq__(self, other):
+        # TODO regparms are unordered, will need to be separate from params
+        # XXX also, functions don't care how their params are qualified
+        return isinstance(other, Function) and self.ret == other.ret and \
+               self.params == other.params
 
 class Array(Type):
     def __init__(self, dim, etyp):
@@ -239,9 +266,38 @@ class Pointer(Type):
         if isinstance(other, Array):
             raise UnhandledEntity(other)
         if isinstance(other, Pointer):
-            return self.target.unqualified().compat(other.target.unqualified()) and \
-                   self.target.qualifiers() >= other.target.qualifiers()
+            # can't discard qualifiers, but can add them
+            if self.target.qualifiers() < other.target.qualifiers():
+                return False
+            st = self.target.unqualified()
+            ot = other.target.unqualified()
+            # may freely convert to or from Pointer(Void())
+            if isinstance(st, Void):
+                return True
+            if isinstance(ot, Void):
+                return True
+            # otherwise require targets to match
+            return st == ot
         return False
+    def common(self, other):
+        if isinstance(other, Array):
+            raise UnhandledEntity(other)
+        if isinstance(other, Pointer):
+            qualifiers = self.target.qualifiers() | other.target.qualifiers()
+            def qualify(t):
+                for q in qualifiers:
+                    t = get_qualifier(q)(t)
+                return t
+            st = self.target.unqualified()
+            ot = other.target.unqualified()
+            # may freely convert to or from Pointer(Void())
+            if isinstance(st, Void):
+                return qualify(ot)
+            # ot is Void() or st == ot
+            return qualify(st)
+        raise ASTError(self, "has no common type with", other)
+    def __eq__(self, other):
+        return self.target == other.target
 
 class DeclSpec(object):
     def __init__(self, decl_spec, typ):
