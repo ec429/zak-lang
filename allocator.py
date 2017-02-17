@@ -390,8 +390,6 @@ class Allocator(object):
         else:
             raise AllocError("Spilling empty register", r)
     def fill(self, r, name):
-        if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            name = self.fetch_src_byte(name) # Literal
         assert name in self.names or isinstance(name, Literal), name
         if r.user == name: # Nothing to do; we're already filled
             return
@@ -418,7 +416,11 @@ class Allocator(object):
         if a.available:
             return a
         if not spill: return
-        raise NotImplementedError("choose spill")
+        for r in self.general_byte_registers:
+            if not r.locked:
+                self.spill(r)
+                return r
+        raise AllocError("Tried to choose byte reg but all are locked")
     def choose_word_register(self, spill=True):
         # implicitly prefers BC > DE > HL
         for r in self.general_word_registers:
@@ -741,28 +743,21 @@ class Allocator(object):
             if isinstance(dtyp, AST.Array):
                 dtyp = AST.Pointer.make(dtyp.type)
             size = self.sizeof(dtyp)
+            self.kill(t.dst) # we're about to overwrite it
             if size == 1:
-                r = self.reg_find_byte(t.dst)
                 if p == self.register('HL'):
                     # LD r,(HL)
-                    if not r:
-                        p.lock() # don't try to use H or L
-                        r = self.choose_byte_register()
-                        r.claim(t.dst) # no need to fill, as we're assigning to it
-                        p.unlock()
-                elif r == self.register('A'):
-                    # LD A,(pp)
-                    raise NotImplementedError(r, p)
-                elif r and r.name not in 'HL':
-                    # LD r,(HL)
-                    raise NotImplementedError(r, p)
-                elif p:
-                    # LD A,(pp)
-                    if r: # we're about to invalidate the old value
-                        r.free()
-                    r = self.register('A')
+                    p.lock() # don't try to use H or L
+                    r = self.choose_byte_register()
                     r.claim(t.dst) # no need to fill, as we're assigning to it
-                elif self.register('HL').available: # r must be None (else r.name in 'HL', contra)
+                    p.unlock()
+                elif p: # BC or DE
+                    # LD A,(pp)
+                    r = self.register('A')
+                    if not r.available:
+                        self.spill(r)
+                    r.claim(t.dst) # no need to fill, as we're assigning to it
+                elif self.register('HL').available:
                     # LD r,(HL)
                     p = self.register('HL')
                     self.fill(p, t.src)
@@ -770,25 +765,37 @@ class Allocator(object):
                     r = self.choose_byte_register()
                     r.claim(t.dst) # no need to fill, as we're assigning to it
                     p.unlock()
-                elif self.register('A').available and not r:
+                elif self.register('A').available:
                     # LD A,(pp)
                     r = self.register('A')
                     r.claim(t.dst) # no need to fill, as we're assigning to it
                     p = self.choose_word_register()
                     self.fill(p, t.src)
                 else:
-                    raise NotImplementedError(r, p)
+                    raise NotImplementedError(p)
+            elif size == 2:
+                hl = self.register('HL')
+                if p == self.register('BC'):
+                    # PUSH/POP to shunt it into HL
+                    if not hl.available:
+                        self.spill(hl)
+                    self.move(hl, p)
+                    p = hl
+                elif p == self.register('DE'):
+                    p = self.exdehl(p)
+                elif not p:
+                    if not hl.available:
+                        self.spill(hl)
+                    self.fill(hl, t.src)
+                    p = hl
+                assert p == hl, p
+                # LD r,(HL)
+                p.lock() # don't try to use H or L
+                r = self.choose_word_register()
+                r.claim(t.dst) # no need to fill, as we're assigning to it
+                p.unlock()
             else:
-                r = self.reg_find_word(t.dst)
-                if p == self.register('HL'):
-                    # LD r,(HL)
-                    if not r:
-                        p.lock() # don't try to use H or L
-                        r = self.choose_word_register()
-                        r.claim(t.dst) # no need to fill, as we're assigning to it
-                        p.unlock()
-                else:
-                    raise NotImplementedError(r, p)
+                raise AllocError("Bad size", size, "for dst of", t)
             self.code.append(self.RTLDeref(r, p))
             r.dirty()
             return
