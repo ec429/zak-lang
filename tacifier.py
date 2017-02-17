@@ -409,6 +409,7 @@ class TACifier(object):
             lvalue, pre, post = self.get_lvalue(lval)
             rvalue, rs = self.walk_expr(rval)
             killr = isinstance(rvalue.name, self.Gensym) # no-one but us has a reference to it
+            # TODO we only need pre if expr.op is a compound assignment
             return (lvalue, rs + pre + self.emit_assignish(expr.op, lvalue, rvalue, killr) + post) # lvalue becomes an rvalue, returns the value written
         if isinstance(expr, AST.EqualityExpr):
             left, ls = self.walk_expr(expr.left)
@@ -536,6 +537,34 @@ class TACifier(object):
                 stmts.append(self.TACKill(target.name))
                 del self.scopes[-1][target.name]
             return (self.Identifier(etyp, sym), stmts)
+        if isinstance(expr, AST.AdditiveExpr):
+            left, ls = self.walk_expr(expr.left)
+            right, rs = self.walk_expr(expr.right)
+            sym = self.gensym() # either use in a conditional context, or assign (really Rename) to a variable
+            lt = left.typ
+            rt = right.typ
+            if lt.compat(rt):
+                ct = lt.common(rt)
+            elif rt.compat(lt):
+                ct = rt.common(lt)
+            else:
+                raise TACError("Tried to add incompatible types", lt, rt)
+            if expr.op == '+':
+                cls = self.TACAdd
+            elif expr.op == '-':
+                cls = self.TACSub
+            else:
+                raise TACError("No such op", expr)
+            stmts = ls + rs + [self.TACDeclare(sym, AST.Auto, ct),
+                               self.TACAssign(sym, left.name),
+                               cls(sym, right.name)]
+            if isinstance(left.name, self.Gensym): # no-one but us has a reference to it
+                stmts.append(self.TACKill(left.name))
+                del self.scopes[-1][left.name]
+            if isinstance(right.name, self.Gensym): # no-one but us has a reference to it
+                stmts.append(self.TACKill(right.name))
+                del self.scopes[-1][right.name]
+            return (self.Identifier(ct, sym), stmts)
         raise UnhandledEntity(expr)
         if isinstance(expr, PAR.FunctionCall):
             func, fs = self.walk_expr(expr.func)
