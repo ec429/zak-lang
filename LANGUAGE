@@ -139,7 +139,8 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 		    <sizeof-expr>
 <precrem-expr>	::= ('++' | '--') <unary-expr>
 <unary-op>	::= '&' | '*' | '~' | '!'
-<cast-expr>	::= <unary-expr> | '(' <type-name> ')' <cast-expr>
+<cast-expr>	::= <unary-expr> |
+		    '(' <type-name> (',' <type-name>)? ')' <cast-expr>
 /* We disallow 'sizeof' without brackets */
 <sizeof-expr>	::= 'sizeof' '(' (<type-name> | <unary-expr>) ')'
 <shift-expr>	::= <cast-expr> |
@@ -210,3 +211,179 @@ Rationale: these alias to register names in the generated assembly, and the
  technique to allow their use.
 All identifiers with a leading _ (underscore) are reserved for the
  implementation.
+
+Types
+-----
+The 'primitive types' are void, bool, byte and word.  Of these, byte and word
+ are 'integer types'.  word has size 2; the others have size 1.
+An enumerated type can be derived from an integer type T; it is essentially
+ identical to T (its 'underlying type') but is considered distinct for
+ type-checking purposes; it may be converted implicitly to T where an integer
+ type is expected, but the reverse does not hold.  Moreover, enumerated types
+ with different tags are distinct types, even when they share the same
+ underlying type.  The type is incomplete until after the underlying type is
+ specified as part of its definition, and complete thereafter; an enumerated
+ type only named and never defined remains incomplete.
+ (Note that, since the type is completed as soon as the underlying type is
+ specified, the enumerated type may be used in the definition of its enumeration
+ values, for instance as an argument to the sizeof operator.)
+A structure type describes a contiguous set of members of object type.  These
+ members are stored in the order of their declaration.  A structure type is
+ incomplete until after the closing '}' of its definition, and complete
+ thereafter; a structure type only named and never defined remains incomplete.
+An array type can be derived from any object type T, describing a contiguous set
+ of some number n (the 'dimension') of objects of type T, i.e. an 'array [n] of
+ T'.  The size of such an array is n multipled by the size of T.
+Structure and array types are collectively the 'aggregate types'.
+A pointer type can be derived from any type T, describing a 'pointer to T' with
+ size 2.
+A function type may be derived from its return type T, its stack parameter list
+ (an ordered list of object types), its register parameter set (an unordered
+ list of object types with register annotations), and the register annotation,
+ if any, of its return type.  (For instance, a 'function (byte, word, word @HL)
+ returning bool @#Z' takes three parameters; its stack parameter list is [byte,
+ word], and its register parameter set is {word @HL}.  It returns a value of
+ type bool in the 'Z' flag.  'function (word @HL, byte, word) returning bool
+ @#Z' is the same type, but 'function (word, word @HL, byte) returning bool @#Z'
+ is not, since its stack parameter list is [word, byte].)
+The primitive types, enumerated types, complete structure types, pointer types
+ and array types are collectively the 'object types'.  Variables (both local and
+ global) and function parameters must have object type; types which are not of
+ object type may only appear as the pointees of pointer types, and (since they
+ cannot be sized) arithmetic on such pointers is forbidden.  It is, however,
+ possible for an expression to contain an intermediate value of non-object type;
+ for instance, if a is a pointer to a non-object type, "&*a" is legal and is
+ equivalent to "a".
+The integer types and enumerated types are collectively the 'scalar types'.
+ These and (pointer to object) types are collectively the 'arithmetic types'.
+Type derivation, as implied above, is recursive; hence (for instance) a
+ structure containing a pointer to an incomplete structure type is a valid
+ object type (and could be denoted "struct a { struct b *c; }").
+
+Type Conversions
+----------------
+Where an expression requires a value of a different type to that supplied, the
+ value is, if possible, converted to the required type.  In some cases (notably
+ some binary operators), the required type in turn depends on the types of the
+ operands.  See "Type Requirements" for the definition of required type.
+For the purposes of determining required type, or converting a value to the type
+ required, a qualified type acts as the corresponding unqualified type, except
+ that the left operand of an assignment expression shall not be const-qualified,
+ even if the right operand is.  (Note that this does not remove qualifiers from
+ the pointee type of a pointer type, the element type of an array type, or the
+ return or argument types of a function type.)
+The following indicate the conversions to each type when that type is required.
+ Where a source type is defined as "value convertible to T", such a value is
+ converted by the composition of the conversion to T with the conversion to the
+ destination type.  Other than where source types are so defined, conversions
+ are not necessarily transitive; the existence of conversions T -> U and U -> V
+ does not imply that their composition is a valid conversion T -> V.
+T:
+* any enum whose underlying type is T.  Return the underlying value.
+word:
+* value convertible to byte.  Return the word with the same (unsigned) integer
+  value (i.e. extend with zeroes).
+pointer to T:
+* array of T.  Return the address of the first element.
+  (The address of an array is also the address of its first element, hence the
+  address of a multidimensional array is recursively defined as the address of
+  the element with subscript 0 in all dimensions.)
+* pointer to void.  Return the address of the pointee.
+pointer to void:
+* value convertible to pointer to T.  Return the address of the pointee.
+pointer to Q-qualified T:
+* value convertible to pointer to T.  Return the address of the pointee.
+  (Note that this does not allow converting a 'pointer to pointer to Q-qualified
+  T' to 'pointer to pointer to T'.  Rationale: see the C99 standard, 6.5.16.1.6,
+  for an example of how doing so could allow a 'pointer to T' to point at a
+  'const T'.)
+pointer to function type F:
+* function type F
+
+Type Requirements
+-----------------
+For an initialiser, the required type is the type of the declared variable.
+We define the 'common scalar type' as follows (and symmetrically):
+* T, T -> T; where T is any scalar type
+* B, word -> word; where B is any scalar type of size 1
+* E, byte -> byte; where E is an enumerated type derived from byte
+* F, word -> word; where F is any enumerated type
+The following combinations have no common scalar type (i.e. it is an error to
+ supply them to an operator which requires their common scalar type).
+* G, byte; where G is an enumerated type derived from word
+* C, D; where C and D are distinct enumerated types (regardless of their
+  underlying types).
+Thus, the common scalar type of two distinct types X and Y must always be an
+ integer type, and its size must be the maximum of the sizes of X and Y.
+We define the 'common pointer type' as follows:  First, an array of T is
+ converted to a pointer to T.  Then, if either pointee is Q-qualified, the
+ common pointer will be so qualified.  The pointee types with qualifiers
+ removed are then combined as follows:
+* P, P -> P; where P is any pointer type
+* P, pointer to void -> P
+(Hence, pointers to distinct (after qualifiers are removed) types neither of
+ which is void have no common pointer type; i.e. it is an error to supply them
+ to an operator which requires their common pointer type.)
+Postfix Operators:
+* subscript: in a[b], require a as pointer to object type T, b as scalar type.
+  The implementation may also allow these to be reversed.  Return T.
+* function call: in a(b, c, ...), require a as function type, b, c etc. as the
+  types of the parameters specified by the type of a.  Return the type
+  specified by the type of a.
+* member: in a.tag, require a as complete structure type.
+          in b->tag, require b as pointer to complete structure type.
+  In both cases, return the type of the specified member of the structure type.
+* postcrement: require operand of arithmetic type T.  Return T.
+Prefix Operators:
+* precrement: require operand of arithmetic type T.  Return T.
+* unary operators: in &a, operand may have any type T.  Return pointer to T.
+                   in *b, require b as pointer to T.  Return T.
+                   in ~c, require c as scalar type T.  Return T.
+                   in !d, require d as arithmetic type or bool.  Return bool.
+* cast operators: in (T)a, require a as object type.  Return T.
+                  in (U,V)b, require b as object type V.  Return U.
+* sizeof: require object type.  Return an integer type (TODO: which one?)
+Shift Operators:
+* in a << b, require a as scalar type T, b as scalar type.  Return T.
+* the same holds for a >> b.
+Bitwise Operators:
+* If both operands are of scalar type, require both operands as their common
+  scalar type T.  Return T.
+* If one operand is convertible to type pointer to T, require the other as a
+  scalar type.  Return pointer to T.
+  (The apparent ambiguity in the above is resolved by noting that no type is
+  implicitly convertible to both pointer and scalar type.)
+Arithmetic Operators:
+The same as for bitwise operators, OR as follows:
+* in a - b, require both operands as pointer to T, where T is either an
+  arithmetic type, void, or bool (and the same for both operands).  Return word.
+  (Rationale: the permitted types T are those whose size is known and is either
+  1 or 2, thus making the implied division either trivial or easy.  While the
+  implied division may also be easy for some aggregate types, such as those
+  having power-of-two size, permitting pointer subtraction on some but not all
+  aggregate types would complicate the language for no obvious gain; if the size
+  of an aggregate is known to be a given power of two, the pointer subtraction
+  can be performed on void pointers and the result shifted appropriately.)
+Relational Operators and Equality Operators:
+* If both operands are of scalar type, require both operands as their common
+  scalar type.
+* If both operands are convertible to pointer type, require both operands as
+  their common pointer type.
+In all cases, return bool.
+Logical Operators:
+Require both operators as bool.  Return bool.
+Ternary Operator:
+In a ? b : c, require a as bool
+* EITHER require b and c as object type T (which must be the same for both).
+  Return T.
+* OR require b and c as their common pointer type P.  Return P.
+Assignment Operators:
+* in a = b,
+  - if a is of scalar, pointer, or complete structure type T, require b as T.
+    Return T.
+    (Note that this does not permit a to be of array type, although b may be if
+    a is of pointer type.)
+* For other operators (the compound assignment operators), if op= is such an
+  operator, "a op= b" is equivalent to "a = a op b".
+Comma Operator:
+No type conversions.  Return type of right operand.

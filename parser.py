@@ -200,6 +200,8 @@ class Parser(object):
     unary_op = Literal('&') | Literal('*') | Literal('~') | Literal('!')
     precrem_expr = (Literal('++') | Literal('--'))("op") + Group(unary_expr)("arg")
     cast_expr = Forward().setName("cast_expr")
+    # TODO support casts with source type:
+    # '(' <type-name> ',' <type-name> ')' <cast-expr>
     do_cast = Suppress(Literal('(')) + Group(type_name)("type") +\
               Suppress(Literal(')')) + Group(cast_expr)("arg")
     cast_expr <<= Alternate3(unary_expr, do_cast, "do_cast")
