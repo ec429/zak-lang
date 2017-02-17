@@ -111,7 +111,7 @@ class Enum(Type):
         self.body = body
         self.typ = typ
     @classmethod
-    def build(self, enum):
+    def build(cls, enum):
         body = enum.get('body')
         typ = None
         if body is not None:
