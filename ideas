@@ -39,3 +39,4 @@ Beware! (differences from C):
 * The assign-ish operators return _the value written_, not the contents of the variable written to.  Because that's waaay easier to implement.
 * The precedence and associativity of binary operators are different.  See LANGUAGE for details.
 * A function with no parameters is declared as "func()", not "func(void)".
+* A string literal is a 'const char []'.

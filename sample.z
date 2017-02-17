@@ -76,7 +76,7 @@ void add_u32(struct u32 *dst, struct u32 *src)
 
 extern void puts(byte *);
 
-byte *text = "Nope.";
+const byte *text = "Nope.";
 
 /*byte main(void)
 {
