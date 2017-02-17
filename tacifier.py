@@ -443,18 +443,8 @@ class TACifier(object):
                     return (self.Identifier(typ, sym), stmts)
                 if isinstance(expr.arg, AST.SubscriptExpr):
                     # &A[B] ==> A + B
-                    #return self.walk_expr(AST.AdditiveExpr...)
-                    pass
-                raise UnhandledEntity(expr)
-                # XXX here is some code.  It's wrong, because &arr[i].  We don't want an rvalue, we want an address dammit
-                target, pre = self.walk_expr(expr.arg)
-                sym = self.gensym()
-                typ = AST.Pointer(target.typ)
-                self.scopes[-1][sym] = (AST.Auto, typ)
-                stmts = pre
-                stmts.append(self.TACDeclare(sym, AST.Auto, typ))
-                stmts.append(self.TACAddress(sym, target.name))
-                return (self.Identifier(typ, sym), stmts)
+                    return self.walk_expr(AST.AdditiveExpr(expr.arg.target, '+', expr.arg.subscript))
+                raise UnhandledEntity(expr.arg)
             raise UnhandledEntity(expr)
         if isinstance(expr, AST.PostcremExpr):
             if expr.op == '++':
