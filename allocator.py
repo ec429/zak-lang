@@ -17,6 +17,7 @@ class Literal(object):
         self.name = None
         self.user = self
         self.isdirty = False
+        self.oldl = self
     def lock(self): pass
     def unlock(self): pass
     def free(self): pass
@@ -28,13 +29,26 @@ class Literal(object):
 class ByteLiteral(Literal):
     size = 1
     typ = AST.Byte()
+    @property
+    def hi(self):
+        return ByteLiteral(0)
+    @property
+    def lo(self):
+        return self
 class WordLiteral(Literal):
     size = 2
     typ = AST.Word()
+    @property
+    def hi(self):
+        return ByteLiteral(self.value >> 8)
+    @property
+    def lo(self):
+        return ByteLiteral(self.value & 0xFF)
 class Register(object):
     def __init__(self, name):
         self.name = name
         self.user = None
+        self._oldl = None # Last thing we held, if it was a literal
         self._lock = False
         self.isdirty = False
     @property
@@ -46,7 +60,17 @@ class Register(object):
         if not self.available:
             raise AllocError("Attempted to claim %s, in use by %s"%(self, self.user))
         self.user = user
+        if isinstance(user, Literal):
+            self.oldl = user
+        else:
+            self.oldl = None
         self.isdirty = False
+    @property
+    def oldl(self):
+        return self._oldl
+    @oldl.setter
+    def oldl(self, value):
+        self._oldl = value
     def dirty(self):
         if not self.user:
             raise AllocError("Attempted to dirty %s, but is empty"%(self,))
@@ -77,6 +101,11 @@ class SplitByteRegister(ByteRegister):
     def __init__(self, name, parent):
         super(SplitByteRegister, self).__init__(name)
         self.parent = parent
+    def claim(self, user):
+        super(SplitByteRegister, self).claim(user)
+        # We could possibly try to update it if user were a literal and
+        # parent had an oldl; but that's probably not worth the trouble
+        self.parent.oldl = None
     def free(self):
         if self.parent.user:
             raise AllocError("Attempted to free %s, in use by parent %s"%(self, self.parent))
@@ -102,6 +131,20 @@ class SplittableRegister(WordRegister):
         super(SplittableRegister, self).__init__(name)
         self.children = [SplitByteRegister(n, self) for n in name]
         self.hi, self.lo = self.children
+    @property
+    def oldl(self):
+        return self._oldl
+    @oldl.setter
+    def oldl(self, value):
+        if value is None:
+            # Invalidate child oldls
+            self.hi.oldl = None
+            self.lo.oldl = None
+        else:
+            # Fill in child oldls with bytes of our oldl
+            self.hi.oldl = value.hi
+            self.lo.oldl = value.lo
+        self._oldl = value
     def free(self):
         if any(c.user for c in self.children):
             raise AllocError("Attempted to free %s, in use by child %s"%(self, c))
@@ -390,6 +433,20 @@ class Allocator(object):
             self.spill(r.parent, ignorelocal)
         else:
             raise AllocError("Spilling empty register", r)
+    def find_old_byte(self, l):
+        if isinstance(l, (AST.IntConst, AST.EnumConst)):
+            # Convert to ByteLiteral
+            l = self.fetch_src_byte(l)
+        for r in self.all_byte_registers:
+            if r.oldl == l:
+                return r
+    def find_old_word(self, l):
+        if isinstance(l, (AST.IntConst, AST.EnumConst)):
+            # Convert to WordLiteral
+            l = self.fetch_src_word(l)
+        for r in self.all_word_registers:
+            if r.oldl == l:
+                return r
     def fill(self, r, name):
         if isinstance(name, AST.IntConst):
             if name.long:
@@ -399,11 +456,26 @@ class Allocator(object):
         assert name in self.names or isinstance(name, Literal), name
         if r.user == name: # Nothing to do; we're already filled
             return
+        if r.oldl == name: # Just rematerialise the label
+            if r.isdirty:
+                self.spill(r)
+            r.free()
+            r.claim(name)
+            return
         assert r.available, (r, r.user, name)
         if name in self.stack:
             sp, typ, size, filled, spilled = self.stack[name]
             self.stack[name] = sp, typ, size, True, spilled
-        self.code.append(self.RTLFill(r, name))
+        if isinstance(name, ByteLiteral):
+            s = self.find_old_byte(name)
+        elif isinstance(name, WordLiteral):
+            s = self.find_old_word(name)
+        else:
+            s = None
+        if s:
+            self.move(r, s)
+        else:
+            self.code.append(self.RTLFill(r, name))
         r.claim(name)
     def kill(self, name):
         for r in self.all_byte_registers + self.general_word_registers:
@@ -548,20 +620,22 @@ class Allocator(object):
             raise AllocError("Wrong size:", src, "is", typ, "of size", size)
         return reg
     def reg_find_byte(self, name):
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            # Convert to ByteLiteral
+            name = self.fetch_src_byte(name)
         if isinstance(name, ByteLiteral):
             return name
-        if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_byte(name)
         assert name in self.names, name
         for r in self.all_byte_registers:
             if r.user == name:
                 return r
         return
     def reg_find_word(self, name):
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            # Convert to WordLiteral
+            name = self.fetch_src_word(name)
         if isinstance(name, Literal):
             return name
-        if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_word(name)
         assert name in self.names, name
         for r in self.registers:
             if r.user == name:
@@ -569,11 +643,15 @@ class Allocator(object):
         return
     def move(self, dst, src):
         dst.claim(src.user)
+        dst.oldl = src.oldl
         self.code.append(self.RTLMove(dst, src))
         if src.isdirty:
             dst.dirty()
             src.clean()
         src.free()
+    def copy_oldl(self, dst, src):
+        dst.claim(src.oldl)
+        self.code.append(self.RTLMove(dst, src))
     def free_a(self, name):
         a = self.register('A')
         if a.user != name:
@@ -594,22 +672,38 @@ class Allocator(object):
                 else:
                     self.spill(hl)
         return hl
-    def load_byte_into_a(self, name):
+    def load_byte_into_a(self, name, try_move=True):
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            # Convert to ByteLiteral
+            name = self.fetch_src_byte(name)
         a = self.register('A')
         if a.user != name:
+            if a.oldl == name: # Just rematerialise the label
+                self.fill(a, name)
+                return a
             if not a.available:
-                move = self.choose_byte_register(False)
+                if try_move:
+                    move = self.choose_byte_register(False)
+                else:
+                    move = None
                 if move:
                     self.move(move, a)
                 else:
                     self.spill(a)
-            r = self.reg_find_byte(name)
+            r = self.find_old_byte(name)
             if r:
-                self.move(a, r)
+                self.copy_oldl(a, r)
             else:
-                self.fill(a, name)
+                r = self.reg_find_byte(name)
+                if r:
+                    self.move(a, r)
+                else:
+                    self.fill(a, name)
         return a
     def load_word_into_hl(self, name):
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            # Convert to WordLiteral
+            name = self.fetch_src_word(name)
         hl = self.register('HL')
         if hl.user != name:
             if not hl.available: # don't bother trying to move, just spill it
@@ -621,6 +715,9 @@ class Allocator(object):
                 self.fill(hl, name)
         return hl
     def load_word_into_ix(self, name):
+        if isinstance(name, (AST.IntConst, AST.EnumConst)):
+            # Convert to WordLiteral
+            name = self.fetch_src_word(name)
         ix = self.register('IX')
         if ix.user != name:
             if not ix.available: # don't bother trying to move, just spill it
@@ -655,6 +752,7 @@ class Allocator(object):
                         s.claim(t.dst)
                         s.dirty()
                         return
+                r.oldl = s.oldl
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
                 if kill_p(t.src):
@@ -750,25 +848,9 @@ class Allocator(object):
                 size = self.sizeof(typ)
                 if size == 1: # return in A
                     # No point trying to avoid spills, we're about to return
-                    a = self.register('A')
-                    if a.user != t.src:
-                        if not a.available:
-                            self.spill(a)
-                        r = self.reg_find_byte(t.src)
-                        if r:
-                            self.move(a, r)
-                        else:
-                            self.fill(a, t.src)
+                    self.load_byte_into_a(t.src, try_move=False)
                 elif size == 2: # return in HL
-                    hl = self.register('HL')
-                    if hl.user != t.src:
-                        if not hl.available:
-                            self.spill(hl)
-                        r = self.reg_find_word(t.src)
-                        if r:
-                            self.move(hl, r)
-                        else:
-                            self.fill(hl, t.src)
+                    self.load_word_into_hl(t.src)
                 else:
                     raise NotImplementedError(size)
             # Spill all dirty (non-local) variables before function return
