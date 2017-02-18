@@ -59,3 +59,66 @@ GEN: the code generator.  Converts RTLStatements into actual Z80 assembly
  Also, the global variable generator; converts static global variables into
  assembler directives, adding them to the bss or data section as appropriate.
  [class GlobalGenerator in codegen.py]
+
+Register Preference Hints
+-------------------------
+Either the TACifier or the internal operations of the RTL allocator may generate
+ register preference hints.  Most TACStatements have a 'prefer' member which is
+ normally the empty string, but may instead be one of TAC.PREFER_RETURN,
+ TAC.PREFER_LOWBYTE or TAC.PREFER_ADDRESS; it applies to the TACStatement's
+ 'dst' (destination symbol).  The allocator will use these when fetching dst
+ (for TACAssign it also uses it when fetching 'src' (source symbol) since it
+ will rename the fetched value to dst); it will also apply TAC.PREFER_LOWBYTE
+ when fetch_src_word calls fetch_src_byte.
+These hints are indications to the allocator about the kind of use we're going
+ to want to make of a value, which it can use to direct its choice of register
+ allocation when fetching that value.
+PREFER_RETURN is used for an expression argument to the return statement; it
+ will prefer A for bytes and HL for words, as those are the return registers for
+ types of those sizes.  (When we implement register annotations, return
+ statements for functions with a return register annotation will want to prefer
+ that register by name.)
+PREFER_LOWBYTE is used for a byte expression which will be used in a word
+ context, typically because it will be added to a word or a pointer.  It will
+ prefer the low byte of a splittable register whose high byte is also free.
+ (Similarly, if it has to spill, it will prefer the low byte if the high byte is
+ not locked.)
+PREFER_ADDRESS is used for pointer expressions which will be dereferenced
+ (either for read or write).  It will prefer HL, as this gives a wider range of
+ options (e.g. LD r,(HL) versus LD A,(BC or DE)).
+By following these hints, the allocator is often able to avoid register-to-
+ register moves that would otherwise be necessary.  For instance, consider the
+ case of subscripting an array by a byte expression.  Concretely:
+	void main()
+	{
+		byte arr[3], sub;
+		arr[sub];
+	}
+The TACifier will produce:
+	TACDeclare(arr, auto, array [3] of byte)
+	TACDeclare(sub, auto, byte)
+	TACDeclare($(1), auto, byte)
+	TACDeclare($(0), auto, Pointer(byte))
+	TACAssign($(0)^A, arr)
+	TACAdd($(0), sub)
+	TACDeref($(1), $(0))
+Assume that all registers start out empty.  The default register allocation
+ would first load arr into BC (first empty word) naming it $(0), then move BC
+ into HL (left operand of an add), then load sub into B (first empty byte), then
+ move B into DE (promote to word: LD E,B; LD D,0), and finally do the ADD HL,DE.
+ (It then goes on to do the TACDeref as LD B,(HL), then spills locals and RETs.)
+But with the hints active, we first load arr into HL (PREFER_ADDRESS), then load
+ sub into C (PREFER_LOWBYTE), promote it to word (LD B,0), and do the ADD HL,BC.
+ By better register choice, we have avoided two moves (one 16-bit and one 8-bit)
+ and thus produced smaller, faster code.
+Essentially the hints allow the allocator to 'plan ahead' without having to
+ actually look ahead in the TAC stream.  Such lookahead would probably require
+ a complicated optimisation algorithm searching many combinations of register
+ allocations to find the global optimum.  But instead, by applying the simple
+ heuristics from the preference hints, we can allocate registers with a greedy
+ algorithm, and still usually find at least a fairly good solution.
+Of course, the effectiveness of these hints is greatest when the allocator has
+ the freest choice of registers, which happens when all registers are empty (or
+ all are full and unlocked, but needing to spill is not usually a good thing).
+ Thus, correct kill logic for gensyms is important to maintain good register
+ allocation in longer functions.
