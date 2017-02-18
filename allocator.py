@@ -304,6 +304,7 @@ class Allocator(object):
                           SplittableRegister('BC'), SplittableRegister('DE'), SplittableRegister('HL'),
                           WordRegister('IX'), WordRegister('IY')]
         self.general_byte_registers = [self.register(n) for n in 'BCDEHL']
+        self.splittable_registers = self.registers[1:3]
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
         self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
@@ -409,8 +410,19 @@ class Allocator(object):
             if r.user == name:
                 r.clean()
                 r.free()
-    def choose_byte_register(self, spill=True):
+    def choose_byte_register(self, spill=True, prefer=''):
+        # Default preference rules:
         # prefer BCDEHL (prefer a reg whose partner is in use), then A, then spill from BCDEHL
+        if prefer == TAC.PREFER_RETURN:
+            # Try A first
+            a = self.register('A')
+            if a.available:
+                return a
+        if prefer == TAC.PREFER_LOWBYTE:
+            # Try CEL first, partner free
+            for r in self.splittable_registers:
+                if r.available:
+                    return r.lo
         for r in self.general_byte_registers:
             if r.available and not r.partner.available:
                 return r
@@ -421,23 +433,43 @@ class Allocator(object):
         if a.available:
             return a
         if not spill: return
+        if prefer == TAC.PREFER_RETURN:
+            # Prefer A
+            if not a.locked:
+                self.spill(a)
+                return a
+        if prefer == TAC.PREFER_LOWBYTE:
+            # Try CEL, partner unlocked
+            for r in self.splittable_registers:
+                if not r.locked:
+                    return r.lo
         for r in self.general_byte_registers:
             if not r.locked:
                 self.spill(r)
                 return r
         raise AllocError("Tried to choose byte reg but all are locked")
-    def choose_word_register(self, spill=True):
-        # implicitly prefers BC > DE > HL
+    def choose_word_register(self, spill=True, prefer=''):
+        # By default, implicitly prefers BC > DE > HL
+        hl = self.register('HL')
+        if prefer in (TAC.PREFER_RETURN, TAC.PREFER_ADDRESS):
+            # prefer HL
+            if hl.available:
+                return hl
         for r in self.general_word_registers:
             if r.available:
                 return r
         if not spill: return
+        if prefer in (TAC.PREFER_RETURN, TAC.PREFER_ADDRESS):
+            # prefer HL
+            if not hl.locked:
+                self.spill(hl)
+                return hl
         for r in self.general_word_registers:
             if not r.locked:
                 self.spill(r)
                 return r
         raise NotImplementedError("Can't spill, all locked")
-    def fetch_src_byte(self, src):
+    def fetch_src_byte(self, src, prefer=''):
         if isinstance(src, AST.IntConst):
             if src.long:
                 raise AllocError("Wrong size:", src, "is long literal")
@@ -463,12 +495,12 @@ class Allocator(object):
         if reg is None:
             # no; we'll have to load it into one
             if self.is_on_stack(src):
-                reg = self.choose_byte_register()
+                reg = self.choose_byte_register(prefer=prefer)
             else: # LD A,(nn)
                 reg = self.free_a(src)
             self.fill(reg, src)
         return reg
-    def fetch_src_word(self, src):
+    def fetch_src_word(self, src, prefer=''):
         if isinstance(src, AST.IntConst):
             # cast it to word
             return WordLiteral(src.value)
@@ -490,37 +522,46 @@ class Allocator(object):
             typ = AST.Pointer(typ.type)
         size = self.sizeof(typ)
         if size == 1:
-            r = self.fetch_src_byte(src)
-            reg = self.choose_word_register()
-            self.move(reg, r)
+            r = self.fetch_src_byte(src, prefer=TAC.PREFER_LOWBYTE)
+            if isinstance(r, SplitByteRegister) and r == r.parent.lo and r.parent.hi.available:
+                # Zero-extend into the parent
+                reg = r.parent
+                s = reg.hi
+                self.fill(s, ByteLiteral(0))
+                r.free()
+                s.free()
+                reg.claim(src)
+            else:
+                reg = self.choose_word_register(prefer=prefer)
+                self.move(reg, r)
         elif size == 2:
             # is it already in a register?
             reg = self.reg_find_word(src)
             if reg is None:
                 # no; we'll have to load it into one
                 if self.is_on_stack(src):
-                    reg = self.choose_word_register()
+                    reg = self.choose_word_register(prefer=prefer)
                 else: # have to go via LD HL,(nn)
                     reg = self.free_hl(src)
                 self.fill(reg, src)
         else:
             raise AllocError("Wrong size:", src, "is", typ, "of size", size)
         return reg
-    def reg_find_byte(self, name):
+    def reg_find_byte(self, name, prefer=''):
         if isinstance(name, ByteLiteral):
             return name
         if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_byte(name)
+            return self.fetch_src_byte(name, prefer=prefer)
         assert name in self.names, name
         for r in self.all_byte_registers:
             if r.user == name:
                 return r
         return
-    def reg_find_word(self, name):
+    def reg_find_word(self, name, prefer=''):
         if isinstance(name, Literal):
             return name
         if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_word(name)
+            return self.fetch_src_word(name, prefer=prefer)
         assert name in self.names, name
         for r in self.registers:
             if r.user == name:
@@ -601,10 +642,10 @@ class Allocator(object):
             size = self.sizeof(typ)
             if size == 1:
                 s = self.fetch_src_byte(t.src)
-                r = self.reg_find_byte(t.dst)
+                r = self.reg_find_byte(t.dst, prefer=t.prefer)
                 if r is None:
                     if isinstance(s, AST.IntConst):
-                        r = self.choose_byte_register()
+                        r = self.choose_byte_register(prefer=t.prefer)
                         r.claim(t.dst)
                     else: # just rename it
                         if kill_p(t.src):
@@ -621,10 +662,10 @@ class Allocator(object):
                 return
             elif size == 2:
                 s = self.fetch_src_word(t.src)
-                r = self.reg_find_word(t.dst)
+                r = self.reg_find_word(t.dst, prefer=t.prefer)
                 if r is None:
                     if isinstance(s, AST.IntConst):
-                        r = self.choose_word_register()
+                        r = self.choose_word_register(prefer=t.prefer)
                         r.claim(t.dst)
                     else: # just rename it
                         if kill_p(t.src):
@@ -641,9 +682,9 @@ class Allocator(object):
             else:
                 raise AllocError("Tried to move an aggregate, size = %d"%(size,))
         if isinstance(t, TAC.TACAddress):
-            r = self.reg_find_word(t.dst)
+            r = self.reg_find_word(t.dst, prefer=t.prefer)
             if r is None:
-                r = self.choose_word_register()
+                r = self.choose_word_register(prefer=t.prefer)
                 r.claim(t.dst)
             if self.is_on_stack(t.src):
                 # its address has been taken, it must have backing storage
@@ -774,7 +815,7 @@ class Allocator(object):
                     # LD A,(pp)
                     r = self.register('A')
                     r.claim(t.dst) # no need to fill, as we're assigning to it
-                    p = self.choose_word_register()
+                    p = self.choose_word_register(prefer=t.prefer)
                     self.fill(p, t.src)
                 else:
                     raise NotImplementedError(p)
@@ -796,7 +837,7 @@ class Allocator(object):
                 assert p == hl, p
                 # LD r,(HL)
                 p.lock() # don't try to use H or L
-                r = self.choose_word_register()
+                r = self.choose_word_register(prefer=t.prefer)
                 r.claim(t.dst) # no need to fill, as we're assigning to it
                 p.unlock()
             else:
@@ -813,7 +854,7 @@ class Allocator(object):
             ssc, styp = self.names[t.src]
             if not isinstance(dtyp, AST.Pointer):
                 raise AllocError("Not of pointer type", t.dst, dtyp)
-            p = self.reg_find_word(t.dst)
+            p = self.reg_find_word(t.dst, prefer=t.prefer)
             size = self.sizeof(styp)
             if size == 1:
                 r = self.reg_find_byte(t.src)
@@ -851,7 +892,7 @@ class Allocator(object):
                     # LD (pp),A
                     r = self.free_a()
                     self.fill(r, t.src)
-                    p = self.choose_word_register()
+                    p = self.choose_word_register(prefer=t.prefer)
                     self.fill(p, t.src)
                 else:
                     raise NotImplementedError(r, p)
@@ -916,7 +957,6 @@ class Allocator(object):
                     flag = 'Z'
                 elif t.op == '<':
                     flag = 'C'
-                    swap = True
                 else:
                     raise NotImplementedError(t.op)
                 left, right = (t.right, t.left) if swap else (t.left, t.right)
@@ -988,14 +1028,14 @@ class Allocator(object):
             self.kill(t.dst) # we're about to overwrite it
             # don't need to lock IX as nothing ever chooses it
             if size == 1:
-                r = self.choose_byte_register()
+                r = self.choose_byte_register(prefer=t.prefer)
                 r.claim(t.dst)
                 self.code.append(self.RTLIndirectRead(r, ix, offset))
                 return
             if size == 2:
                 hl = self.register('HL')
                 hl.lock() # can't use HL with IX
-                r = self.choose_word_register()
+                r = self.choose_word_register(prefer=t.prefer)
                 hl.unlock()
                 r.claim(t.dst)
                 self.code.append(self.RTLIndirectRead(r, ix, offset))

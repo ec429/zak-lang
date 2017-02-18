@@ -14,17 +14,22 @@ class UnhandledEntity(TACError):
         return '%s %s' % (type(self.entity), self.entity)
 
 class TACifier(object):
+    PREFER_RETURN = '^R' # Prefer register for returning this type
+    PREFER_LOWBYTE = '^L' # Prefer low byte of a splittable register
+    PREFER_ADDRESS = '^A' # Will be used as an address; prefer HL
     class TACStatement(object):
-        def __init__(self, dst, src):
+        def __init__(self, dst, src, prefer=''):
             self.dst = dst
             self.src = src
+            # What kind of register would we like the dst in?
+            self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
             if self.src == dst:
                 self.src = src
         def __repr__(self):
-            return '%s(%s, %s)'%(self.__class__.__name__, self.dst, self.src)
+            return '%s(%s%s, %s)'%(self.__class__.__name__, self.dst, self.prefer, self.src)
     class TACDeclare(TACStatement):
         def __init__(self, name, sc, typ):
             self.name = name
@@ -68,50 +73,52 @@ class TACifier(object):
     class TACWrite(TACStatement): # write through a pointer.  Implies kill of dst as well as src
         pass
     class TACMemberRead(TACStatement): # read through a struct pointer
-        def __init__(self, dst, src, tag):
+        def __init__(self, dst, src, tag, prefer=''):
             self.dst = dst
             self.src = src
             self.tag = tag
+            self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
             if self.src == dst:
                 self.src = src
         def __repr__(self):
-            return 'TACMemberRead(%s, %s, %s)'%(self.dst, self.src, self.tag)
+            return 'TACMemberRead(%s%s, %s, %s)'%(self.dst, self.prefer, self.src, self.tag)
     class TACMemberWrite(TACStatement): # write through a struct pointer.  Implies kill of dst as well as src
-        def __init__(self, dst, tag, src):
+        def __init__(self, dst, tag, src, prefer=''):
             self.dst = dst
             self.tag = tag
             self.src = src
+            self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
             if self.src == dst:
                 self.src = src
         def __repr__(self):
-            return 'TACMemberWrite(%s, %s, %s)'%(self.dst, self.tag, self.src)
+            return 'TACMemberWrite(%s%s, %s, %s)'%(self.dst, self.prefer, self.tag, self.src)
     class TACAssign(TACStatement):
         pass
     class TACAddress(TACStatement):
-        def __init__(self, dst, src):
+        def __init__(self, dst, src, prefer=''):
             self.dst = dst
             self.src = src
+            self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
             if self.src == dst:
                 self.src = src
         def __repr__(self):
-            return 'TACAddress(%s, %s)'%(self.dst, self.src)
+            return 'TACAddress(%s%s, %s)'%(self.dst, self.prefer, self.src)
     class TACCompare(TACStatement):
-        def __init__(self, dst, op, left, right, kl=False, kr=False):
+        def __init__(self, dst, op, left, right, prefer=''):
             self.dst = dst
             self.op = op
             self.left = left
             self.right = right
-            self.kl = kl
-            self.kr = kr
+            self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
                 self.dst = src
@@ -120,7 +127,7 @@ class TACifier(object):
             if self.right == dst:
                 self.right = src
         def __repr__(self):
-            return 'TACCompare(%s, %s, %s, %s)'%(self.dst, self.op, self.left, self.right)
+            return 'TACCompare(%s%s, %s, %s, %s)'%(self.dst, self.prefer, self.op, self.left, self.right)
     class TACAdd(TACStatement):
         pass
     class TACCall(TACStatement):
@@ -256,7 +263,7 @@ class TACifier(object):
     def done(self, sym):
         if isinstance(sym.name, self.Gensym): # no-one but us has a reference to it
             del self.scopes[-1][sym.name]
-    def get_lvalue(self, lval):
+    def get_lvalue(self, lval, prefer=''):
         if isinstance(lval, AST.Identifier):
             for scope in reversed(self.scopes):
                 if lval.ident in scope:
@@ -265,14 +272,14 @@ class TACifier(object):
             raise TACError("Name", lval.ident, "not in scope")
         if isinstance(lval, AST.UnaryExpr):
             if lval.op == '*':
-                pointer, pre = self.walk_expr(lval.arg)
+                pointer, pre = self.walk_expr(lval.arg, prefer=self.PREFER_ADDRESS)
                 if not isinstance(pointer.typ, AST.Pointer):
                     raise TACError("Dereferencing non-pointer", lval.arg)
                 sym = self.gensym()
                 typ = pointer.typ.target
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
-                pre.append(self.TACDeref(sym, self.nokill(pointer.name)))
+                pre.append(self.TACDeref(sym, self.nokill(pointer.name), prefer=prefer))
                 post = [self.TACWrite(pointer.name, sym)]
                 self.done(pointer)
                 return (self.Identifier(typ, sym), pre, post)
@@ -307,17 +314,17 @@ class TACifier(object):
             psym = self.gensym() # we never add this to the scope
             ptyp = AST.Pointer(etyp)
             pre.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
-            pre.append(self.TACAssign(psym, target.name))
+            pre.append(self.TACAssign(psym, target.name, prefer=self.PREFER_ADDRESS))
             pre.append(self.TACAdd(psym, subscript.name))
             sym = self.gensym()
             self.scopes[-1][sym] = (AST.Auto, etyp)
             pre.insert(0, self.TACDeclare(sym, AST.Auto, etyp))
-            pre.append(self.TACDeref(sym, self.nokill(psym)))
+            pre.append(self.TACDeref(sym, self.nokill(psym), prefer=prefer))
             post = [self.TACWrite(psym, sym)]
             self.done(target)
             return (self.Identifier(etyp, sym), pre, post)
         raise NotImplementedError(lval)
-    def get_rvalue(self, rval):
+    def get_rvalue(self, rval, prefer=''):
         if isinstance(rval, AST.Identifier):
             for scope in reversed(self.scopes):
                 if rval.ident in scope:
@@ -338,13 +345,13 @@ class TACifier(object):
             l = len(rval.text) + 1
             styp = AST.Array(AST.IntConst(l, True), AST.Const(AST.Byte()))
             stmts.append(self.TACDeclare(string, AST.Static, styp))
-            stmts.append(self.TACAddress(sym, string))
+            stmts.append(self.TACAddress(sym, string, prefer=prefer))
             return (self.Identifier(typ, sym), stmts)
         if isinstance(rval, AST.EnumConst):
             typ = self.get_enum_type(rval.name)
             return (self.Identifier(typ, rval), [])
         raise UnhandledEntity(rval)
-    def emit_assignish(self, op, lvalue, rvalue):
+    def emit_assignish(self, op, lvalue, rvalue, prefer=''):
         if not isinstance(lvalue, self.Identifier):
             raise TACError("Uninterpreted lvalue", lvalue)
         if not isinstance(rvalue, self.Identifier):
@@ -360,7 +367,7 @@ class TACifier(object):
         if op == '+=':
             return [self.TACAdd(lvalue.name, rvalue.name)]
         if op == '=':
-            return [self.TACAssign(lvalue.name, rvalue.name)]
+            return [self.TACAssign(lvalue.name, rvalue.name, prefer=prefer)]
         raise NotImplementedError(op)
     def emit_return(self, rvalue):
         if self.in_func is None:
@@ -372,13 +379,17 @@ class TACifier(object):
                 raise TACError("Type mismatch returning", rvalue, "from", decl)
             return [self.TACReturn(rvalue.name)]
         raise TACError("Uninterpreted rvalue", rvalue)
-    def walk_expr(self, expr): # this always returns an rvalue
+    def retcon_preference(self, stmts, sym, prefer):
+        stmts = [s for s in stmts if isinstance(s, TACAssign) and s.dst == sym]
+        assert len(stmts) == 1, (stmts, sym)
+        stmts[0].prefer = prefer
+    def walk_expr(self, expr, prefer=''): # this always returns an rvalue
         if isinstance(expr, (AST.IntConst, AST.EnumConst, AST.StringLiteral, AST.Identifier, AST.FlagIdent)):
-            return self.get_rvalue(expr)
+            return self.get_rvalue(expr, prefer=prefer)
         if isinstance(expr, AST.AssignExpr):
             lval = expr.left
             rval = expr.right
-            lvalue, pre, post = self.get_lvalue(lval)
+            lvalue, pre, post = self.get_lvalue(lval, prefer=prefer)
             rvalue, rs = self.walk_expr(rval)
             # TODO we only need pre if expr.op is a compound assignment
             return (lvalue, rs + pre + self.emit_assignish(expr.op, lvalue, rvalue) + post) # lvalue becomes an rvalue, returns the value written
@@ -399,7 +410,7 @@ class TACifier(object):
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 stmts = ps
                 stmts.append(self.TACDeclare(sym, AST.Auto, typ))
-                stmts.append(self.TACDeref(sym, pointer.name))
+                stmts.append(self.TACDeref(sym, pointer.name, prefer=prefer))
                 self.done(pointer)
                 return (self.Identifier(typ, sym), stmts)
             if expr.op == '&':
@@ -409,7 +420,7 @@ class TACifier(object):
                     typ = AST.Pointer(target.typ)
                     self.scopes[-1][sym] = (AST.Auto, typ)
                     stmts = [self.TACDeclare(sym, AST.Auto, typ),
-                             self.TACAddress(sym, target.name)]
+                             self.TACAddress(sym, target.name, prefer=prefer)]
                     return (self.Identifier(typ, sym), stmts)
                 if isinstance(expr.arg, AST.SubscriptExpr):
                     # &A[B] ==> A + B, but A must be pointer
@@ -436,7 +447,7 @@ class TACifier(object):
                     sym = self.gensym()
                     typ = AST.Pointer(etyp)
                     stmts.insert(0, self.TACDeclare(sym, AST.Auto, typ))
-                    stmts.append(self.TACAssign(sym, target.name))
+                    stmts.append(self.TACAssign(sym, target.name, prefer=prefer))
                     self.done(target)
                     stmts.append(self.TACAdd(sym, subscript.name))
                     self.done(subscript)
@@ -450,7 +461,7 @@ class TACifier(object):
                 crement = -1
             else: # can't happen
                 raise TACError("Weird excrement op", expr) # well, what would _you_ call the set {increment, decrement}?
-            lvalue, pre, post = self.get_lvalue(expr.target)
+            lvalue, pre, post = self.get_lvalue(expr.target, prefer=prefer)
             typ = lvalue.typ
             if AST.Word().compat(typ):
                 crement = typ.make(crement)
@@ -466,7 +477,7 @@ class TACifier(object):
                 crement = -1
             else: # can't happen
                 raise TACError("Weird excrement op", expr)
-            lvalue, pre, post = self.get_lvalue(expr.arg)
+            lvalue, pre, post = self.get_lvalue(expr.arg, prefer=prefer)
             typ = lvalue.typ
             typ = lvalue.typ
             if AST.Word().compat(typ):
@@ -482,11 +493,12 @@ class TACifier(object):
             if expr.op == '->':
                 if not isinstance(target.typ, AST.Pointer):
                     raise TACError("Dereferencing (by ->) non-pointer", expr.target)
+                self.retcon_preference(pre, target, self.PREFER_ADDRESS)
                 sym = self.gensym()
                 typ = self.get_member_type(target.typ.target, member)
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 pre.insert(0, self.TACDeclare(sym, AST.Auto, typ))
-                pre.append(self.TACMemberRead(sym, target.name, member))
+                pre.append(self.TACMemberRead(sym, target.name, member, prefer=prefer))
                 self.done(target)
                 return (self.Identifier(typ, sym), pre)
             raise NotImplementedError(lval)
@@ -505,7 +517,8 @@ class TACifier(object):
                 etyp = target.typ.type
             else:
                 raise TACError("Subscripting non-pointerish", expr.target)
-            subscript, sp = self.walk_expr(expr.subscript)
+            # If subscript is a byte, we'll be wanting to extend it for the add
+            subscript, sp = self.walk_expr(expr.subscript, prefer=self.PREFER_LOWBYTE)
             styp = subscript.typ
             if isinstance(styp, AST.Enum):
                 if styp.typ is None:
@@ -520,14 +533,14 @@ class TACifier(object):
             psym = self.gensym() # we never add this to the scope
             ptyp = AST.Pointer(etyp)
             stmts.insert(0, self.TACDeclare(psym, AST.Auto, ptyp))
-            stmts.append(self.TACAssign(psym, target.name))
+            stmts.append(self.TACAssign(psym, target.name, prefer=self.PREFER_ADDRESS))
             self.done(target)
             stmts.append(self.TACAdd(psym, subscript.name))
             self.done(subscript)
             sym = self.gensym()
             self.scopes[-1][sym] = (AST.Auto, etyp)
             stmts.insert(0, self.TACDeclare(sym, AST.Auto, etyp))
-            stmts.append(self.TACDeref(sym, psym))
+            stmts.append(self.TACDeref(sym, psym, prefer=prefer))
             return (self.Identifier(etyp, sym), stmts)
         if isinstance(expr, AST.AdditiveExpr):
             left, ls = self.walk_expr(expr.left)
@@ -541,6 +554,11 @@ class TACifier(object):
                 ct = rt.common(lt)
             else:
                 raise TACError("Tried to add incompatible types", lt, rt)
+            if ct.size == 2:
+                if rt.size == 1:
+                    self.retcon_preference(rs, right, self.PREFER_LOWBYTE)
+                elif lt.size == 1:
+                    self.retcon_preference(ls, left, self.PREFER_LOWBYTE)
             if expr.op == '+':
                 cls = self.TACAdd
             elif expr.op == '-':
@@ -548,7 +566,7 @@ class TACifier(object):
             else:
                 raise TACError("No such op", expr)
             stmts = ls + rs + [self.TACDeclare(sym, AST.Auto, ct),
-                               self.TACAssign(sym, left.name),
+                               self.TACAssign(sym, left.name, prefer=prefer),
                                cls(sym, right.name)]
             self.done(left)
             self.done(right)
@@ -586,7 +604,7 @@ class TACifier(object):
                 self.done(rvalue)
             return stmts
         elif isinstance(stmt, AST.ReturnStatement):
-            rvalue, stmts = self.walk_expr(stmt.value)
+            rvalue, stmts = self.walk_expr(stmt.value, prefer=self.PREFER_RETURN)
             return stmts + self.emit_return(rvalue)
         elif isinstance(stmt, AST.LabelStatement):
             return [self.TACLabel(stmt.label)]
