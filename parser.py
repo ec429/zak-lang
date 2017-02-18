@@ -263,7 +263,7 @@ class Parser(object):
     source.ignore(cppStyleComment)
     @classmethod
     def parse(cls, text):
-        return cls.source.parseString(text)#, parseAll=True)
+        return cls.source.parseString(text, parseAll=True)
 
 ## Entry point
 
