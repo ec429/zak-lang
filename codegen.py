@@ -154,8 +154,8 @@ class FunctionGenerator(Generator):
                         self.text.append("\tPOP %s"%(op.dst,))
                 else:
                     raise GenError(op.dst.size)
-            elif isinstance(op.src, TAC.Gensym):
-                # we assume it's a global one, and thus its name exists
+            elif isinstance(op.src, (TAC.Gensym, str)):
+                # we assume it's a global symbol, and thus its name exists
                 self.text.append("\tLD %s,%s"%(op.dst, self.staticname(op.src)))
             elif isinstance(op.src, LIT):
                 assert op.dst.size <= op.src.size, op
@@ -189,17 +189,17 @@ class FunctionGenerator(Generator):
                 raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLCp):
             assert isinstance(op.dst, REG), op
-            if isinstance(op.src, REG):
-                if op.dst.name == 'A': # 8-bit add
-                    if op.src.size != 1: # should never happen
-                        raise GenError("Cp A with %s (%d)"%(op.src, op.src.size))
-                    self.text.append("\tCP %s"%(op.src,))
+            if op.dst.name == 'A': # 8-bit compare
+                if op.src.size != 1: # should never happen
+                    raise GenError("Cp A with %s (%d)"%(op.src, op.src.size))
+                assert isinstance(op.src, (REG,LIT)), op
+                self.text.append("\tCP %s"%(op.src,))
             else:
                 raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLAnd):
             assert isinstance(op.dst, REG), op
             if isinstance(op.src, REG):
-                if op.dst.name == 'A': # 8-bit add
+                if op.dst.name == 'A': # 8-bit and
                     if op.src.size != 1: # should never happen
                         raise GenError("And A with %s (%d)"%(op.src, op.src.size))
                     self.text.append("\tAND %s"%(op.src,))
