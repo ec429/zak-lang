@@ -263,7 +263,7 @@ class TACifier(object):
     def done(self, sym):
         if isinstance(sym.name, self.Gensym): # no-one but us has a reference to it
             del self.scopes[-1][sym.name]
-    def get_lvalue(self, lval, prefer=''):
+    def get_lvalue(self, lval, prefer='', read=True):
         if isinstance(lval, AST.Identifier):
             for scope in reversed(self.scopes):
                 if lval.ident in scope:
@@ -279,7 +279,8 @@ class TACifier(object):
                 typ = pointer.typ.target
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 pa.insert(0, self.TACDeclare(sym, AST.Auto, typ))
-                pa.append(self.TACDeref(sym, self.nokill(pointer.name), prefer=prefer))
+                if read:
+                    pa.append(self.TACDeref(sym, self.nokill(pointer.name), prefer=prefer))
                 post = [self.TACWrite(pointer.name, sym)]
                 self.done(pointer)
                 return (self.Identifier(typ, sym), pa, post + pb)
@@ -294,7 +295,8 @@ class TACifier(object):
                 typ = self.get_member_type(target.typ.target, member)
                 self.scopes[-1][sym] = (AST.Auto, typ)
                 ta.insert(0, self.TACDeclare(sym, AST.Auto, typ))
-                ta.append(self.TACMemberRead(sym, self.nokill(target.name), member))
+                if read:
+                    ta.append(self.TACMemberRead(sym, self.nokill(target.name), member))
                 post = [self.TACMemberWrite(target.name, member, sym)]
                 self.done(target)
                 return (self.Identifier(typ, sym), ta, post + tb)
@@ -319,7 +321,8 @@ class TACifier(object):
             sym = self.gensym()
             self.scopes[-1][sym] = (AST.Auto, etyp)
             pre.insert(0, self.TACDeclare(sym, AST.Auto, etyp))
-            pre.append(self.TACDeref(sym, self.nokill(psym), prefer=prefer))
+            if read:
+                pre.append(self.TACDeref(sym, self.nokill(psym), prefer=prefer))
             post = [self.TACWrite(psym, sym)]
             self.done(target)
             return (self.Identifier(etyp, sym), pre, post + tb + sb)
@@ -394,9 +397,9 @@ class TACifier(object):
         if isinstance(expr, AST.AssignExpr):
             lval = expr.left
             rval = expr.right
-            lvalue, la, lb = self.get_lvalue(lval, prefer=prefer)
+            compound = expr.op != '=' # need to read the old value
+            lvalue, la, lb = self.get_lvalue(lval, prefer=prefer, read=compound)
             rvalue, ra, rb = self.walk_expr(rval)
-            # TODO we only need pre if expr.op is a compound assignment
             return (lvalue, ra + la + self.emit_assignish(expr.op, lvalue, rvalue) + lb + rb, []) # lvalue becomes an rvalue, returns the value written
         if isinstance(expr, AST.EqualityExpr):
             left, la, lb = self.walk_expr(expr.left)
