@@ -4,8 +4,8 @@ struct u32
 	word lo;
 };
 
-/*struct two_u32 /* nested structs test */
+struct two_u32 /* nested structs test */
 {
 	struct u32 x;
 	struct u32 y;
-};*/
+};

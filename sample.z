@@ -36,7 +36,7 @@ byte sum(byte a, byte b)
 	return a;
 }
 
-void strcpy(byte *dst, byte *src)
+void strcpy(byte *dst, const byte *src)
 {
 	byte tmp;
 
@@ -74,20 +74,20 @@ void add_u32(struct u32 *dst, struct u32 *src)
 	dst->hi += src->hi;
 }
 
-extern void puts(byte *);
+extern void puts(const byte *);
 
 const byte *text = "Nope.";
 
-/*byte main(void)
+byte main()
 {
-	byte *hello = "Hello sailor";
-	struct u32 bar_count = {.lo = 5};
+	byte *hello = (byte *)"Hello sailor"; // naughty!
+	//struct u32 bar_count = {.lo = 5};
 	byte *offset;
 
-	bar_count.lo += 18;
+	//bar_count.lo += 18;
 	offset = hello;
 	offset += 6;
 	strcpy(offset, "world!");
 	puts(hello);
 	return 0;
-}*/
+}

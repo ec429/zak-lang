@@ -1,4 +1,4 @@
-void pa(void)
+void pa()
 {
 	byte a;
 	byte *b;
