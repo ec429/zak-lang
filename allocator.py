@@ -316,8 +316,8 @@ class Allocator(object):
             self.enums.update(outer.enums)
     def evaluate(self, t):
         # t is a TAC rvalue
-        sym, pre = t
-        if pre:
+        sym, pre, post = t
+        if pre or post:
             raise AllocError("Unhandled constant-expression", t)
         assert isinstance(sym, TAC.Identifier), t
         assert isinstance(sym.name, AST.IntConst), t
