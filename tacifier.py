@@ -510,7 +510,7 @@ class TACifier(object):
             return (self.Identifier(typ, sym), ls + rs + [self.TACDeclare(sym, AST.Auto, typ),
                                                           self.TACCompare(sym, expr.op, left.name, right.name)])
         if isinstance(expr, AST.SubscriptExpr):
-            target, tp = self.walk_expr(expr.target)
+            target, tp = self.walk_expr(expr.target, prefer=self.PREFER_ADDRESS)
             if isinstance(target.typ, AST.Pointer):
                 etyp = target.typ.target
             elif isinstance(target.typ, AST.Array):

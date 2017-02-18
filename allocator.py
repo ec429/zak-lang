@@ -641,10 +641,10 @@ class Allocator(object):
             sc, typ = self.names[t.dst]
             size = self.sizeof(typ)
             if size == 1:
-                s = self.fetch_src_byte(t.src)
+                s = self.fetch_src_byte(t.src, prefer=t.prefer)
                 r = self.reg_find_byte(t.dst)
                 if r is None:
-                    if isinstance(s, AST.IntConst):
+                    if isinstance(s, Literal):
                         r = self.choose_byte_register(prefer=t.prefer)
                         r.claim(t.dst)
                     else: # just rename it
@@ -661,10 +661,10 @@ class Allocator(object):
                     self.kill(t.src)
                 return
             elif size == 2:
-                s = self.fetch_src_word(t.src)
+                s = self.fetch_src_word(t.src, prefer=t.prefer)
                 r = self.reg_find_word(t.dst)
                 if r is None:
-                    if isinstance(s, AST.IntConst):
+                    if isinstance(s, Literal):
                         r = self.choose_word_register(prefer=t.prefer)
                         r.claim(t.dst)
                     else: # just rename it
