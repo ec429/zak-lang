@@ -547,21 +547,21 @@ class Allocator(object):
         else:
             raise AllocError("Wrong size:", src, "is", typ, "of size", size)
         return reg
-    def reg_find_byte(self, name, prefer=''):
+    def reg_find_byte(self, name):
         if isinstance(name, ByteLiteral):
             return name
         if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_byte(name, prefer=prefer)
+            return self.fetch_src_byte(name)
         assert name in self.names, name
         for r in self.all_byte_registers:
             if r.user == name:
                 return r
         return
-    def reg_find_word(self, name, prefer=''):
+    def reg_find_word(self, name):
         if isinstance(name, Literal):
             return name
         if isinstance(name, (AST.IntConst, AST.EnumConst)):
-            return self.fetch_src_word(name, prefer=prefer)
+            return self.fetch_src_word(name)
         assert name in self.names, name
         for r in self.registers:
             if r.user == name:
@@ -642,7 +642,7 @@ class Allocator(object):
             size = self.sizeof(typ)
             if size == 1:
                 s = self.fetch_src_byte(t.src)
-                r = self.reg_find_byte(t.dst, prefer=t.prefer)
+                r = self.reg_find_byte(t.dst)
                 if r is None:
                     if isinstance(s, AST.IntConst):
                         r = self.choose_byte_register(prefer=t.prefer)
@@ -662,7 +662,7 @@ class Allocator(object):
                 return
             elif size == 2:
                 s = self.fetch_src_word(t.src)
-                r = self.reg_find_word(t.dst, prefer=t.prefer)
+                r = self.reg_find_word(t.dst)
                 if r is None:
                     if isinstance(s, AST.IntConst):
                         r = self.choose_word_register(prefer=t.prefer)
@@ -682,7 +682,7 @@ class Allocator(object):
             else:
                 raise AllocError("Tried to move an aggregate, size = %d"%(size,))
         if isinstance(t, TAC.TACAddress):
-            r = self.reg_find_word(t.dst, prefer=t.prefer)
+            r = self.reg_find_word(t.dst)
             if r is None:
                 r = self.choose_word_register(prefer=t.prefer)
                 r.claim(t.dst)
@@ -854,7 +854,7 @@ class Allocator(object):
             ssc, styp = self.names[t.src]
             if not isinstance(dtyp, AST.Pointer):
                 raise AllocError("Not of pointer type", t.dst, dtyp)
-            p = self.reg_find_word(t.dst, prefer=t.prefer)
+            p = self.reg_find_word(t.dst)
             size = self.sizeof(styp)
             if size == 1:
                 r = self.reg_find_byte(t.src)
