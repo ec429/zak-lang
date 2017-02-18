@@ -3,24 +3,37 @@ Implementation Notes for the zak compiler
 
 The compiler is built in stages, as denoted by the following diagram:
 
-    source->LEX->PAR->TAC->RTL->GEN->assembly
+    source->PAR->AST->TAC->RTL->GEN->assembly
 
 These stages are:
-LEX: the lexical analyser.  Splits the source up into tokens, then throws away
- any whitespace or comment tokens.
- [class Lexer in parser.py]
-PAR: the parser.  Builds abstract syntax trees from the token stream.  It
- produces a separate tree for each top-level declaration (which includes
- function definitions, as they are treated internally as a declaration with an
- initialiser).
+PAR: the parser.  Builds a parse tree from the token stream.  Implemented using
+ pyparsing (https://pythonhosted.org/pyparsing/), a combinatorial parser.  It's
+ recursive descent and we don't use lookahead, so we have to take care to avoid
+ left-recursion.
+ There is a close correspondence between expressions in the parser code and
+ productions in the specification of the grammar (see file LANGUAGE).
  [class Parser in parser.py]
+AST: the Abstract Syntax Tree builder.  Converts the parser output into object
+ trees more closely matching the semantics of the language.  The main nontrivial
+ transformation is the conversion of type names (e.g. in declarations), as they
+ are written 'inside-out' in the syntax.  The type objects (subclasses of Type)
+ are used by some of the following stages.
+ As a rule, an AST node class should have a 'build' classmethod which interprets
+ the PAR output; separating this from the __init__ allows later stages of the
+ pipeline to create their own AST objects, e.g. to rewrite the AST to support
+ optimisation or to convert an expression into another form already handled.
+ [class AST_builder in ast_build.py]
 TAC: Two-Address Code, the first intermediate form.  Converts expressions,
  statements etc. into sequences of TACStatements, which (with the arguable
  exception of TACCall) have at most two arguments.  In order to do this, the
- TACifier creates gensyms to hold intermediate results; sometimes it will
- create a gensym unnecessarily (immediately copying it to another symbol and
- never using it again), which might be a good target for an optimisation pass,
- particularly as this might improve the next stage's optimisation abilities.
+ TACifier creates gensyms to hold intermediate results; these are normally
+ assumed to be unneeded ('killable') as soon as they have been used as the src
+ (source) name of a TACStatement (some statements either don't imply a kill at
+ all, or imply a kill of both their src and dst - for instance TACWrite).  When
+ a gensym is not killable (e.g. it is the address for a read-modify-write of an
+ lvalue) it is wrapped in a NoKill object (in this example, the read would use
+ a NoKill while the write would use the bare Gensym, as the write is the last
+ use of the symbol and can thus kill it).
  [class TACifier in tacifier.py]
 RTL: Register Transfer Language, the second intermediate form.  Allocates
  storage for static and auto variables.  Performs register allocation on the
@@ -35,6 +48,10 @@ RTL: Register Transfer Language, the second intermediate form.  Allocates
  and (if the local variable never has its address taken) eliding the spill.
  And, again, detecting local variables (whose address is not taken) which are
  never filled or spilled, and eliding their stack slot.
+ A 'kill' of a symbol (which must be a gensym) implies that it will not be
+ needed again, so any registers which were holding a copy of it are freed.  This
+ often allows us to avoid ever spilling the symbol (as it is not possible to
+ take the address of a gensym) and thus elide the stack slot.
  [class Allocator in allocator.py]
 GEN: the code generator.  Converts RTLStatements into actual Z80 assembly
  language text, adding them to the bss, data or text section as appropriate.
