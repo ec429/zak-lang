@@ -274,7 +274,8 @@ class Pointer(Type):
         return 'Pointer(%s)'%(self.target,)
     def compat(self, other):
         if isinstance(other, Array):
-            raise UnhandledEntity(other)
+            # decay it to a pointer
+            other = Pointer(other.type)
         if isinstance(other, Pointer):
             # can't discard qualifiers, but can add them
             if self.target.qualifiers() < other.target.qualifiers():

@@ -17,6 +17,18 @@ byte main(void)
 	return 0;
 }
 
+/* Produce better code by manual CSE */
+byte main2(void)
+{
+	byte *p = rgb;
+
+	*p++ = 0xff;
+	*p++ = 0x7f;
+	*p = 0;
+
+	return 0;
+}
+
 byte colours[$NUM_COLOURS][3]/* = {
 	[$RED][0] = 0xff,
 	[$GREEN][1] = 0xff,
