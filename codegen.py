@@ -4,6 +4,7 @@ import sys, pprint, string
 import ast_build as AST, tacifier, allocator
 TAC = tacifier.TACifier
 REG = allocator.Register
+SRG = allocator.SplittableRegister
 LIT = allocator.Literal
 RTL = allocator.Allocator
 Flag = allocator.Flag
@@ -149,6 +150,9 @@ class FunctionGenerator(Generator):
                     if op.src.size == 1:
                         self.text.append("\tLD %s,0"%(op.dst.hi,))
                         self.text.append("\tLD %s,%s"%(op.dst.lo, op.src))
+                    elif isinstance(op.dst, SRG) and isinstance(op.src, SRG):
+                        self.text.append("\tLD %s,%s"%(op.dst.hi, op.src.hi))
+                        self.text.append("\tLD %s,%s"%(op.dst.lo, op.src.lo))
                     else:
                         self.text.append("\tPUSH %s"%(op.src,))
                         self.text.append("\tPOP %s"%(op.dst,))
