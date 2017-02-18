@@ -87,7 +87,8 @@ class Parser(object):
     abstract_decl <<= (OGroup(pointer, "pointer") +
                        dir_abs_decl) |\
                       Group(pointer)("pointer")
-    param_decl = Group(ty_pe)("type") + OGroup(regparm, "regparm") +\
+    param_decl = OGroup(qualifier_list, "qualifier_list") +\
+                 Group(ty_pe)("type") + OGroup(regparm, "regparm") +\
                  Optional(Alternate([('decl_spec', decl_spec),
                                      ('abstract_decl', abstract_decl),
                                      ]))
@@ -153,7 +154,9 @@ class Parser(object):
                           OGroup(qualifier_list, 'qualifier_list') +
                           Group(ty_pe)("type") + Group(decl_spec)("decl_spec") +
                           block_stmt)("function_defn")
-    type_name = ty_pe("type") + abstract_decl("abstract_decl")
+    type_name = OGroup(qualifier_list, 'qualifier_list') +\
+                Group(ty_pe)("type") +\
+                Group(abstract_decl)("abstract_decl")
     dec_const = Word('123456789', nums)
     hex_const = Suppress(Word('0', 'xX', exact=2)) + Word(hexnums)
     oct_const = Word('0', '01234567')

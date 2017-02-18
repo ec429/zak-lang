@@ -59,6 +59,16 @@ def get_qualifier(qual):
         if qual == q.qualifier:
             return q
     raise ASTError("No such qualifier", qual)
+def qualify(qualifiers, t):
+    for q in qualifiers:
+        t = get_qualifier(q)(t)
+    return t
+def build_qualifiers(ql, t):
+    if ql.get('const') is not None:
+        t = Const(t)
+    if ql.get('volatile') is not None:
+        t = Volatile(t)
+    return t
 
 class PrimitiveType(Type):
     name = None
@@ -195,6 +205,8 @@ def Param(param):
     typ = get_type(param['type'])
     if typ is None:
         raise UnhandledEntity(param)
+    if param.get('qualifier_list') is not None:
+        typ = build_qualifiers(param['qualifier_list'], typ)
     if param.get('decl_spec') is not None:
         return DirectDecl(param['decl_spec'], typ)
     if param.get('abstract_decl') is not None:
@@ -258,6 +270,14 @@ def DirectDecl(direct_decl, typ):
         return DirectDecl(direct_decl['direct_decl'], typ)
     return DeclIdentifier(direct_decl.get('identifier'), typ)
 
+def DirAbsDecl(dir_abs_decl, typ):
+    # dir-abs-decl    ::= '(' <abstract-decl> ')' | <abs-arr-decl> | <abs-func-decl>
+    d = DirectDecl(dir_abs_decl, typ)
+    assert isinstance(d, DeclIdentifier), d
+    if d.ident is not None: # shouldn't be possible
+        raise UnhandledEntity(d)
+    return d.typ
+
 class Pointer(Type):
     fixed_size = 2
     # <pointer>       ::= '*' <qualifier-list>? <pointer>?
@@ -295,17 +315,13 @@ class Pointer(Type):
             raise UnhandledEntity(other)
         if isinstance(other, Pointer):
             qualifiers = self.target.qualifiers() | other.target.qualifiers()
-            def qualify(t):
-                for q in qualifiers:
-                    t = get_qualifier(q)(t)
-                return t
             st = self.target.unqualified()
             ot = other.target.unqualified()
             # may freely convert to or from Pointer(Void())
             if isinstance(st, Void):
-                return qualify(ot)
+                return qualify(qualifiers, ot)
             # ot is Void() or st == ot
-            return qualify(st)
+            return qualify(qualifiers, st)
         raise ASTError(self, "has no common type with", other)
     def __eq__(self, other):
         if not isinstance(other, Pointer):
@@ -504,9 +520,29 @@ def DoUnary(expr):
         raise UnhandledEntity(expr['sizeof_expr'])
     return DoPostfix(expr);
 
+class CastExpr(object):
+    # '(' <type-name> (',' <type-name>)? ')' <cast-expr>
+    # XXX parser doesn't support two-type casts yet
+    def __init__(self, typ, arg):
+        self.typ = typ
+        self.arg = arg
+    @classmethod
+    def build(cls, expr):
+        type_name = expr['type']
+        typ = get_type(type_name['type'])
+        if typ is None:
+            raise UnhandledEntity(type_name)
+        if type_name.get('qualifier_list') is not None:
+            typ = build_qualifiers(type_name['qualifier_list'], typ)
+        if type_name.get('abstract_decl') is not None:
+            typ = DirAbsDecl(type_name['abstract_decl'], typ)
+        return cls(typ, DoCast(expr['arg']))
+    def __str__(self):
+        return '%s(%s %s)'%(self.__class__.__name__, self.typ, self.arg)
+
 def DoCast(expr):
     if expr.get('do_cast') is not None:
-        raise UnhandledEntity(expr['do_cast'])
+        return CastExpr.build(expr['do_cast'])
     return DoUnary(expr)
 
 class BinaryExpr(object):
@@ -684,11 +720,7 @@ class Declare(object):
         if self.typ is None:
             raise UnhandledEntity(declare['type'])
         if declare.get('qualifier_list') is not None:
-            ql = declare['qualifier_list']
-            if ql.get('const') is not None:
-                self.typ = Const(self.typ)
-            if ql.get('volatile') is not None:
-                self.typ = Volatile(self.typ)
+            self.typ = build_qualifiers(declare['qualifier_list'], self.typ)
         # <declaration>   ::= <object-decls> ';' | <function-defn>
         # <object-decls>  ::= <object-decl> (',' <object-decls>)?
         self.declarations = [Declaration(d, self.sc, self.typ) for d in declare['declaration']]

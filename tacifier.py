@@ -363,7 +363,7 @@ class TACifier(object):
             raise UnhandledEntity(rvalue) # TODO qualifiers?
             rvalue.typ = AST.Pointer(rvalue.typ.typ)
         if isinstance(lvalue.typ, AST.Pointer) and op != '=':
-            if not AST.Word.compat(rvalue.typ):
+            if not AST.Word().compat(rvalue.typ):
                 raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
         elif not lvalue.typ.compat(rvalue.typ):
             raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
@@ -566,10 +566,10 @@ class TACifier(object):
                 ct = rt.common(lt)
             else:
                 raise TACError("Tried to add incompatible types", lt, rt)
-            if ct.size == 2:
-                if rt.size == 1:
+            if ct.fixed_size == 2:
+                if rt.fixed_size == 1:
                     self.retcon_preference(rs, right, self.PREFER_LOWBYTE)
-                elif lt.size == 1:
+                elif lt.fixed_size == 1:
                     self.retcon_preference(ls, left, self.PREFER_LOWBYTE)
             if expr.op == '+':
                 cls = self.TACAdd
@@ -583,6 +583,13 @@ class TACifier(object):
             self.done(left)
             self.done(right)
             return (self.Identifier(ct, sym), stmts + lb + rb, [])
+        if isinstance(expr, AST.CastExpr):
+            arg, aa, ab = self.walk_expr(expr.arg)
+            sym = self.gensym()
+            stmts = aa + [self.TACDeclare(sym, AST.Auto, expr.typ),
+                          self.TACAssign(sym, arg.name, prefer=prefer)]
+            self.done(arg)
+            return (self.Identifier(expr.typ, sym), stmts + ab, [])
         raise UnhandledEntity(expr)
         if isinstance(expr, PAR.FunctionCall):
             func, fs = self.walk_expr(expr.func)
