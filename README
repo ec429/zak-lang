@@ -23,12 +23,23 @@ Writing the kernel for pegboard (my SMP Z80 architecture, see
 
 How?
 ----
-./driver.py [<infile>] [-o <outfile>] [-D] [-n]
+./driver.py [<infile>] [-o <outfile>] <options>
 If <infile> is omitted, standard input is used.
 If -o <outfile> is omitted, it defaults to 'a.out'.
+Options:
 -D enables debugging output (probably only useful for the compiler developer).
 -n or --dry-run disables the writing of the output file, thus just checking
  whether the input can be compiled.  Again, probably mostly useful with -D.
+-W[no-]foo enables [disables] warning foo.
+-G[no-]foo enables [disables] generator option foo.
+Warnings:
+-Werror: treat all enabled warnings as errors.  Disabled by default.
+-Wfunc-void: warn if a function is declared as taking a single argument of type
+ 'void'.  Usually this is because you thought you were writing C, and what you
+ really wanted was a function taking no arguments.  Enabled by default.
+Generator options:
+-Gcheck-stack: start each function by checking that the caller provided the
+ correct stack size in (IY-1); if not, call panic.  Disabled by default.
 
 For implementation notes, see the file HACKING.
 
