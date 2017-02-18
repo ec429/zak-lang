@@ -670,7 +670,8 @@ class Allocator(object):
                     else: # just rename it
                         if kill_p(t.src):
                             self.kill(t.src)
-                        self.spill(s)
+                        else:
+                            self.spill(s)
                         s.claim(t.dst)
                         s.dirty()
                         return
