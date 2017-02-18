@@ -199,9 +199,17 @@ class TACifier(object):
         Used when we need the result of a subexpression more than once, e.g. for
         value writeback in an lvalue."""
         def __init__(self, g):
-            self.n = g.n
+            self.g = g
         def __repr__(self):
-            return "$'(%d)"%(self.n,)
+            return "$'(%d)"%(self.g.n,)
+        def __hash__(self):
+            return hash(self.g)
+        def __eq__(self, other):
+            if isinstance(other, TACifier.Gensym):
+                return self.g == other
+            if isinstance(other, TACifier.NoKill):
+                return self.g == other.g
+            return False
     def nokill(self, sym):
         if isinstance(sym, self.Gensym):
             return self.NoKill(sym)
@@ -310,7 +318,6 @@ class TACifier(object):
             return (self.Identifier(etyp, sym), pre, post)
         raise NotImplementedError(lval)
     def get_rvalue(self, rval):
-        # TODO check if returning an Array; if so, decay it to a pointer by taking its address
         if isinstance(rval, AST.Identifier):
             for scope in reversed(self.scopes):
                 if rval.ident in scope:
@@ -397,7 +404,7 @@ class TACifier(object):
                 return (self.Identifier(typ, sym), stmts)
             if expr.op == '&':
                 if isinstance(expr.arg, AST.Identifier):
-                    target, _ = self.get_rvalue(expr)
+                    target, _ = self.get_rvalue(expr.arg)
                     sym = self.gensym()
                     typ = AST.Pointer(target.typ)
                     self.scopes[-1][sym] = (AST.Auto, typ)
@@ -405,8 +412,35 @@ class TACifier(object):
                              self.TACAddress(sym, target.name)]
                     return (self.Identifier(typ, sym), stmts)
                 if isinstance(expr.arg, AST.SubscriptExpr):
-                    # &A[B] ==> A + B
-                    return self.walk_expr(AST.AdditiveExpr(expr.arg.target, '+', expr.arg.subscript))
+                    # &A[B] ==> A + B, but A must be pointer
+                    expr = expr.arg
+                    target, tp = self.walk_expr(expr.target)
+                    if isinstance(target.typ, AST.Pointer):
+                        etyp = target.typ.target
+                    elif isinstance(target.typ, AST.Array):
+                        etyp = target.typ.type
+                    else:
+                        raise TACError("Subscripting non-pointerish", expr.target)
+                    subscript, sp = self.walk_expr(expr.subscript)
+                    styp = subscript.typ
+                    if isinstance(styp, AST.Enum):
+                        if styp.typ is None:
+                            if styp.tag not in self.enums:
+                                raise TACError("Subscripting with incomplete enum", styp.tag)
+                            styp = self.enums[subscript.typ.tag].typ
+                        else:
+                            styp = styp.typ
+                    if not AST.Word().compat(styp):
+                        raise TACError("Subscript is not integer", expr.subscript)
+                    stmts = tp + sp
+                    sym = self.gensym()
+                    typ = AST.Pointer(etyp)
+                    stmts.insert(0, self.TACDeclare(sym, AST.Auto, typ))
+                    stmts.append(self.TACAssign(sym, target.name))
+                    self.done(target)
+                    stmts.append(self.TACAdd(sym, subscript.name))
+                    self.done(subscript)
+                    return (self.Identifier(typ, sym), stmts)
                 raise UnhandledEntity(expr.arg)
             raise UnhandledEntity(expr)
         if isinstance(expr, AST.PostcremExpr):
@@ -498,7 +532,7 @@ class TACifier(object):
         if isinstance(expr, AST.AdditiveExpr):
             left, ls = self.walk_expr(expr.left)
             right, rs = self.walk_expr(expr.right)
-            sym = self.gensym() # either use in a conditional context, or assign (really Rename) to a variable
+            sym = self.gensym()
             lt = left.typ
             rt = right.typ
             if lt.compat(rt):

@@ -28,6 +28,8 @@ class Type(object):
     def __eq__(self, other):
         """Stricter than compat, this is used for pointee equality."""
         raise NotImplementedError(self, other)
+    def __ne__(self, other):
+        return not self == other
     @classmethod
     def build(cls, *args):
         raise NotImplementedError(cls, *args)
@@ -229,6 +231,14 @@ class Array(Type):
         return cls(DoExpression(atail['dimension']), etyp)
     def __str__(self):
         return 'array [%s] of %s' % (self.dim, self.type)
+    def __eq__(self, other):
+        if not isinstance(other, Array):
+            return False
+        if self.type != other.type:
+            return False
+        assert isinstance(self.dim, IntConst), self
+        assert isinstance(other.dim, IntConst), other
+        return self.dim.value == other.dim.value
 
 def DirectDecl(direct_decl, typ):
     # <direct-decl>   ::= <identifier> | '(' <decl-spec> ')' | <array-decl> | <func-decl>
@@ -297,6 +307,8 @@ class Pointer(Type):
             return qualify(st)
         raise ASTError(self, "has no common type with", other)
     def __eq__(self, other):
+        if not isinstance(other, Pointer):
+            return False
         return self.target == other.target
 
 class DeclSpec(object):

@@ -390,6 +390,11 @@ class Allocator(object):
         else:
             raise AllocError("Spilling empty register", r)
     def fill(self, r, name):
+        if isinstance(name, AST.IntConst):
+            if name.long:
+                name = WordLiteral(name.value)
+            else:
+                name = ByteLiteral(name.value)
         assert name in self.names or isinstance(name, Literal), name
         if r.user == name: # Nothing to do; we're already filled
             return
@@ -482,7 +487,7 @@ class Allocator(object):
         sc, typ = self.names[src]
         if isinstance(typ, AST.Array):
             # decay it to a pointer
-            typ = AST.Pointer.make(typ.type)
+            typ = AST.Pointer(typ.type)
         size = self.sizeof(typ)
         if size == 1:
             r = self.fetch_src_byte(src)
