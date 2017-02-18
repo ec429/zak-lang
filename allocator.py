@@ -325,7 +325,7 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLCp(%s, %s)'%(self.dst, self.src)
-    def __init__(self, func, name, tac, outer=None):
+    def __init__(self, func, name, tac, w_opts, outer=None):
         self.name = name
         self.tac = tac
         globs = tac.scopes[0]
@@ -354,6 +354,9 @@ class Allocator(object):
         self.code = []
         self.structs = {}
         self.enums = {}
+        self.werror = w_opts.get('error', False)
+        self.wfunc_void = w_opts.get('func-void', True)
+        self.has_error = False
         if outer:
             self.structs.update(outer.structs)
             self.enums.update(outer.enums)
@@ -992,15 +995,17 @@ class Allocator(object):
             # spill everything
             # PUSH IY
             # IY := IX
-            # CALL
+            # CALL (clobbers registers)
             # POP IY
             ix = self.register('IX')
             iy = self.register('IY')
             self.code.append(self.RTLMove(ix, iy))
-            css = self.choose_word_register() # caller stack size
-            if css.name == 'HL': # that's no good to us, we need something we can add to IX
-                css = self.exdehl(css)
-            self.fill(css, PAR.Literal(self.sp + 1))
+            hl = self.register('HL')
+            hl.lock() # can't use HL, we need something we can add to IX
+            css = self.choose_word_register()
+            hl.unlock()
+            self.code.append(self.RTLIndirectRead(css.lo, iy, -1))
+            self.code.append(self.RTLFill(css.hi, ByteLiteral(0)))
             self.code.append(self.RTLAdd(ix, css))
             csp = 0 # callee stack pointer
             for arg in t.args:
@@ -1011,7 +1016,7 @@ class Allocator(object):
                 else:
                     raise NotImplementedError(size)
                 csp += size
-            self.code.append(self.RTLIndirectWrite(ix, -1, PAR.Literal(csp)))
+            self.code.append(self.RTLIndirectWrite(ix, -1, ByteLiteral(csp)))
             # Spill all dirty variables before function call
             for r in self.registers:
                 if not r.available:
@@ -1022,6 +1027,7 @@ class Allocator(object):
                 raise NotImplementedError(t)
             else:
                 self.code.append(self.RTLCall(t.func.name))
+            self.clobber_registers()
             self.code.append(self.RTLPop(iy))
             if t.ret is not None: # bind name with return value
                 rtyp = t.ret.type
@@ -1186,6 +1192,8 @@ class Allocator(object):
                 raise AllocError("Clobbering locked register", r)
             if not r.available and r.user != leave:
                 self.spill(r)
+            if not r.user or r.user != leave:
+                r.oldl = None
         if self.flags:
             raise NotImplementedError("Spilling flags on clobber")
             self.flags = None
@@ -1208,6 +1216,9 @@ class Allocator(object):
     def allocate_params(self):
         if not isinstance(self.decl, AST.Function): # can't happen
             raise AllocError(self.decl, "is not a Function")
+        if self.wfunc_void:
+            if len(self.decl.params) == 1 and self.decl.params[0].typ == AST.Void():
+                self.warn("Warning: function '%s' takes single void argument.\n         Did you mean to declare it with no arguments?" % (self.name,))
         for p in self.decl.params:
             name = p.ident
             typ = p.typ
@@ -1333,8 +1344,13 @@ class Allocator(object):
         except:
             self.err("In: %s %r"%(self.name, self.decl))
             raise
-    def err(self, text):
-        print >>sys.stderr, text
+    def warn(self, *args):
+        if self.werror:
+            self.has_error = True
+        print >>sys.stderr, ' '.join(map(str, args))
+    def err(self, *args):
+        self.has_error = True
+        print >>sys.stderr, ' '.join(map(str, args))
     def debug(self):
         print "static:"
         pprint.pprint(self.static)
@@ -1355,12 +1371,12 @@ class Allocator(object):
 
 ## Entry point
 
-def alloc(tac, debug=False):
+def alloc(tac, w_opts, debug=False):
     allocations = {}
     # Do file-scope first, to get struct and enum definitions
     if debug:
         print "Allocating globals"
-    fs = Allocator(tac.functions[None], None, tac)
+    fs = Allocator(tac.functions[None], None, tac, w_opts)
     fs.allocate()
     if debug:
         fs.debug()
@@ -1369,9 +1385,11 @@ def alloc(tac, debug=False):
         if name is None: continue
         if debug:
             print "Allocating", name
-        alloc = Allocator(func, name, tac, outer=fs)
+        alloc = Allocator(func, name, tac, w_opts, outer=fs)
         alloc.structs = fs.structs
         alloc.allocate()
+        if alloc.has_error:
+            raise AllocError("Error emitted (see above)")
         if debug:
             alloc.debug()
         allocations[name] = alloc
@@ -1393,4 +1411,4 @@ if __name__ == "__main__":
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
     print
-    allocations = alloc(tac, debug=True)
+    allocations = alloc(tac, {'error': True}, debug=True)

@@ -8,7 +8,15 @@ def parse_args():
     x.add_option('-o', '--output', type='string', default="out.s")
     x.add_option('-D', '--debug', action='store_true')
     x.add_option('-n', '--dry-run', action='store_true')
+    x.add_option('-W', action='append', dest='warnings', default=[])
+    x.add_option('-G', action='append', dest='gen_opts', default=[])
     opts, args = x.parse_args()
+    def boolean_option(t):
+        if t.startswith('no-'):
+            return (t[3:], False)
+        return (t, True)
+    opts.warnings = dict(map(boolean_option, opts.warnings))
+    opts.gen_opts = dict(map(boolean_option, opts.gen_opts))
     if len(args) > 1:
         x.error("Multiple input files - only one supported")
     return opts, args
@@ -42,9 +50,9 @@ if __name__ == "__main__":
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
     if opts.debug: print "-ALLOC/RTL-"
-    allocations = allocator.alloc(tac, debug=opts.debug)
+    allocations = allocator.alloc(tac, opts.warnings, debug=opts.debug)
     if opts.debug: print "-CODE/GEN-"
-    gen = codegen.generate(allocations)
+    gen = codegen.generate(allocations, opts.gen_opts)
     if opts.debug:
         print "Generated line counts:"
         for name, g in gen.items():

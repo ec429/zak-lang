@@ -12,12 +12,13 @@ Flag = allocator.Flag
 class GenError(Exception): pass
 
 class Generator(object):
-    def __init__(self, rtl, name):
+    def __init__(self, rtl, name, opts):
         self.rtl = rtl
         self.name = name
         self.text = []
         self.data = []
         self.bss = []
+        self.check_stack = opts.get('check-stack', False)
     def staticname(self, name):
         if isinstance(name, TAC.Gensym):
             return '__gensym_%d'%(name.n,)
@@ -29,8 +30,14 @@ class Generator(object):
 
 class FunctionGenerator(Generator):
     def extend_stack_frame(self):
-        if self.rtl.sp > 127:
-            raise GenError("Stack too big (%d bytes, max 127)"%(self.rtl.sp,))
+        if self.rtl.sp > 128:
+            raise GenError("Stack too big (%d bytes, max 128)"%(self.rtl.sp,))
+        if self.check_stack:
+            # Check caller stack size
+            # TODO if we take a regparm in A, we need to PUSH AF and POP it later
+            self.text.append("\tLD A,(IY-1)")
+            self.text.append("\tCP %d"%(self.rtl.caller_stack_size,))
+            self.text.append("\tCALL NZ,panic")
         if self.rtl.sp > self.rtl.caller_stack_size:
             self.text.append("\tLD (IY-1),%d"%(self.rtl.sp,))
             # TODO optional stack-frame zeroing (in case of uninitialised variables)?
@@ -313,15 +320,15 @@ class GlobalGenerator(Generator):
 
 ## Entry point
 
-def generate(allocations):
+def generate(allocations, gen_opts):
     generated = {}
     for name, rtl in allocations.items():
         if name is None:
-            gen = GlobalGenerator(rtl, name)
+            gen = GlobalGenerator(rtl, name, gen_opts)
             gen.generate()
             generated[name] = gen
         else:
-            gen = FunctionGenerator(rtl, name)
+            gen = FunctionGenerator(rtl, name, gen_opts)
             gen.generate()
             generated[name] = gen
     return generated

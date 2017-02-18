@@ -365,7 +365,8 @@ class TACifier(object):
         if isinstance(lvalue.typ, AST.Pointer) and op != '=':
             if not AST.Word().compat(rvalue.typ):
                 raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
-        elif not lvalue.typ.compat(rvalue.typ):
+        elif not lvalue.typ.compat(rvalue.typ.unqualified()):
+            # we unqualify it because qualifiers at top level don't matter
             raise TACError("Type mismatch in assignment", lvalue, op, rvalue)
         if op == '+=':
             return [self.TACAdd(lvalue.name, rvalue.name)]
@@ -590,32 +591,32 @@ class TACifier(object):
                           self.TACAssign(sym, arg.name, prefer=prefer)]
             self.done(arg)
             return (self.Identifier(expr.typ, sym), stmts + ab, [])
-        raise UnhandledEntity(expr)
-        if isinstance(expr, PAR.FunctionCall):
-            func, fs = self.walk_expr(expr.func)
-            if not isinstance(func.typ, PAR.FunctionDecl):
-                raise TACError("Calling non-function", expr, "is", func)
-            rtyp = func.typ.bound
-            atyp = func.typ.arglist
+        if isinstance(expr, AST.FuncallExpr):
+            func, fa, fb = self.walk_expr(expr.target)
+            if not isinstance(func.typ, AST.Function):
+                raise TACError("Calling non-function %s, is %s" %(expr, func))
+            rtyp = func.typ.ret
+            if len(func.typ.params) != len(expr.args):
+                raise TACError("Function %s takes %d args, passed %d" %
+                               (expr.target, len(func.typ.params), len(expr.args)))
             args = []
-            stmts = []
-            types = []
-            for a in expr.args.args:
-                arg, st = self.walk_expr(a)
+            asa = []
+            asb = []
+            for p,a in zip(func.typ.params, expr.args):
+                arg, aa, ab = self.walk_expr(a)
+                if not p.typ.compat(arg.typ):
+                    raise TACError("Parameter %s has wrong type %s for parameter %s (type %s) to %s" %
+                                   (a, arg.typ, p.ident, p.typ, expr.target))
                 args.append(arg)
-                stmts.extend(st)
-                types.append((None, arg.typ))
-            if atyp != PAR.ArgList(types):
-                self.err(atyp)
-                self.err(PAR.ArgList(types))
-                raise TACError("Parameter types don't match in call", expr)
-            if rtyp == PAR.ValueOfType('void'):
-                return (None, fs + stmts + [self.TACCall(func, None, args)])
+                asa.extend(aa)
+                asb.extend(ab)
+            if rtyp == AST.Void():
+                return (None, fa + asa + [self.TACCall(func, None, args)] + asb + fb, [])
             sym = self.gensym()
             self.scopes[-1][sym] = (LEX.Auto('auto'), rtyp)
-            return (self.Identifier(rtyp, sym), [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fs + stmts +
-                                                [self.TACCall(func, sym, args)])
-        raise NotImplementedError(expr)
+            return (self.Identifier(rtyp, sym), [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fa + asa +
+                                                [self.TACCall(func, sym, args)] + asb + fb, [])
+        raise UnhandledEntity(expr)
     def walk_stmt(self, stmt):
         if isinstance(stmt, AST.ExpressionStatement):
             rvalue, pre, post = self.walk_expr(stmt.expr)
@@ -791,8 +792,8 @@ class TACifier(object):
             self.scopes[-1][d.ident] = (sc, typ)
             return
         raise TACError("Bad top-level decl", type(decl), str(decl))
-    def err(self, text):
-        print >>sys.stderr, text
+    def err(self, *args):
+        print >>sys.stderr, ' '.join(map(str, args))
     def debug(self):
         print "TAC scopes:"
         for i,scope in enumerate(self.scopes):
