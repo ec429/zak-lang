@@ -19,12 +19,16 @@ class Generator(object):
         self.data = []
         self.bss = []
         self.check_stack = opts.get('check-stack', False)
+        self.has_error = False
     def staticname(self, name):
         if isinstance(name, TAC.Gensym):
             return '__gensym_%d'%(name.n,)
         return name
     def print_stats(self):
         print "Lines: %d bss, %d data, %d text"%(len(self.bss), len(self.data), len(self.text))
+    def err(self, *args):
+        self.has_error = True
+        print >>sys.stderr, ' '.join(map(str, args))
 
 ## Generate Z80 assembly code from the stack & RTL
 
@@ -50,8 +54,9 @@ class FunctionGenerator(Generator):
             assert isinstance(op.reg, REG), op
             if self.rtl.is_on_stack(op.name):
                 offset, typ, size, filled, spilled = self.rtl.stack[op.name]
-                if offset is None: # technically this might be able to happen, but I don't see how
-                    raise GenError("Fill reg %s with non-backed %s"%(op.reg, op.name))
+                if offset is None: # We tried to fill a local that isn't memory-backed.  That implies (a) it is never spilled, (b) it isn't a (stack) parameter; hence it's uninitialised
+                    assert not spilled, self.rtl.stack[op.name]
+                    raise GenError("Fill reg %s with non-backed %s '%s' (used uninitialised variable?)"%(op.reg, typ, op.name))
                 if size != op.reg.size:
                     raise GenError("Fill reg %s (%d) with %s (%d)"%(op.reg, op.reg.size, op.name, size))
                 if size == 1:
@@ -261,9 +266,9 @@ class FunctionGenerator(Generator):
         for op in self.rtl.code:
             try:
                 self.generate_op(op)
-            except:
-                self.err("In func: %s %s"%(self.name, self.rtl.decl))
-                self.err("In op: %r"%(op,))
+            except Exception as e:
+                self.err("In func:", self.name, "as", self.rtl.decl)
+                self.err("In op:", op)
                 raise
     def escape_string(self, s):
         out = []
@@ -275,8 +280,6 @@ class FunctionGenerator(Generator):
             else:
                 out.append('\\%03o'%(ord(c),))
         return ''.join(out)
-    def err(self, text):
-        print >>sys.stderr, text
 
 ## Generate assembler directives for the global variables
 
