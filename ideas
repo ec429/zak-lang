@@ -45,6 +45,8 @@ Beware! (differences from C):
 * My definition of 'scalar' and 'arithmetic' types is the opposite way round to that in the C standard.  Because dammit, a pointer isn't a scalar, and you can do arithmetic on it!
 * Enumerated types specify, at definition time, their underlying integer type.  Also, enumeration constants have the type of the enumerator which defined them, rather than (as in C) 'int'.
 * There is a notion of an 'incomplete enum type' analogous to that of 'incomplete struct type'.  While I can't see any use for this, I also can't see any reason to forbid it, and the compiler supports it naturally - it would take more effort to detect and reject it than it does to support it.
+* There are no union types.
+* The tag namespaces for structure and enumeration types are distinct (i.e. "struct foo { /* ... */ }; enum foo byte { /* ... */ };" declares two distinct types).
 
 Proposed future extensions:
 * Allow the underlying type of an enum to be another enum.
