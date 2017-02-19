@@ -116,10 +116,10 @@ class SplitByteRegister(ByteRegister):
     # state-functions are used for EX DE,HL
     @property
     def state(self):
-        return (self.user, self.isdirty)
+        return (self.user, self.isdirty, self.oldl)
     @state.setter
     def state(self, value):
-        self.user, self.isdirty = value
+        self.user, self.isdirty, self.oldl = value
     @property
     def available(self):
         return not (self.user or self.parent.user)
@@ -154,10 +154,10 @@ class SplittableRegister(WordRegister):
     def state(self):
         if self.locked:
             raise AllocError("Attempted to copy state of %s while locked"%(self,))
-        return (self.user, self.isdirty, [c.state for c in self.children])
+        return (self.user, self.isdirty, self.oldl, [c.state for c in self.children])
     @state.setter
     def state(self, value):
-        self.user, self.isdirty, d = value
+        self.user, self.isdirty, self.oldl, d = value
         for c,v in zip(self.children, d):
             c.state = v
     @property
@@ -411,7 +411,7 @@ class Allocator(object):
             return esiz * typ.n
     def is_on_stack(self, name):
         return name in self.stack
-    def spill(self, r, ignorelocal=False):
+    def spill(self, r, ignorelocal=False, leave=None):
         if r.user:
             name = r.user
             if isinstance(name, Literal):
@@ -420,6 +420,8 @@ class Allocator(object):
             assert name in self.names, name
             if ignorelocal and name in self.stack:
                 r.clean() # it's local and we're not going to need it again
+            if name == leave: # we don't want to spill this, we need it
+                return
             if r.isdirty:
                 if name in self.stack:
                     sp, typ, size, filled, spilled = self.stack[name]
@@ -431,9 +433,9 @@ class Allocator(object):
         elif isinstance(r, SplittableRegister):
             for c in r.children:
                 if c.user:
-                    self.spill(c, ignorelocal)
+                    self.spill(c, ignorelocal, leave=leave)
         elif isinstance(r, SplitByteRegister):
-            self.spill(r.parent, ignorelocal)
+            self.spill(r.parent, ignorelocal, leave=leave)
         else:
             raise AllocError("Spilling empty register", r)
     def find_old_byte(self, l):
@@ -744,16 +746,17 @@ class Allocator(object):
                 s = self.fetch_src_byte(t.src, prefer=t.prefer)
                 r = self.reg_find_byte(t.dst)
                 if r is None:
-                    if isinstance(s, Literal):
+                    d = s.isdirty
+                    if kill_p(t.src):
+                        self.kill(t.src)
+                    if isinstance(s, Literal) or s.isdirty: # load-immediate, or copy
                         r = self.choose_byte_register(prefer=t.prefer)
                         r.claim(t.dst)
-                    else: # just rename it
-                        if kill_p(t.src):
-                            self.kill(t.src)
-                        else:
-                            self.spill(s)
+                    else: # rename
+                        s.free()
                         s.claim(t.dst)
-                        s.dirty()
+                        if d:
+                            s.dirty()
                         return
                 r.oldl = s.oldl
                 self.code.append(self.RTLMove(r, s))
@@ -765,16 +768,17 @@ class Allocator(object):
                 s = self.fetch_src_word(t.src, prefer=t.prefer)
                 r = self.reg_find_word(t.dst)
                 if r is None:
-                    if isinstance(s, Literal):
+                    d = s.isdirty
+                    if kill_p(t.src):
+                        self.kill(t.src)
+                    if isinstance(s, Literal) or s.isdirty: # load-immediate, or copy
                         r = self.choose_word_register(prefer=t.prefer)
                         r.claim(t.dst)
-                    else: # just rename it
-                        if kill_p(t.src):
-                            self.kill(t.src)
-                        else:
-                            self.spill(s)
+                    else: # rename
+                        s.free()
                         s.claim(t.dst)
-                        s.dirty()
+                        if d:
+                            s.dirty()
                         return
                 self.code.append(self.RTLMove(r, s))
                 r.dirty()
@@ -957,18 +961,25 @@ class Allocator(object):
                 elif r and r.name not in 'HL':
                     r.lock()
                     # LD (HL),r
-                    if p:
-                        # PUSH/POP to swap it with HL
-                        raise NotImplementedError(r, p)
+                    if p == self.register('DE'):
+                        p = self.exdehl(p)
+                    elif p:
+                        assert p == self.register('BC'), p
+                        # shunt it into HL
+                        hl = self.free_hl(t.dst)
+                        self.move(hl, p)
+                        p = hl
                     else:
-                        p = self.free_hl(t.dst)
-                        self.fill(p, t.dst)
+                        # get it in HL
+                        p = self.load_word_into_hl(t.dst)
                     r.unlock()
                 elif p:
                     # LD (pp),A
                     raise NotImplementedError(r, p)
                 elif self.register('HL').available: # r must be None (else r.name in 'HL', contra)
                     # LD r,(HL)
+                    if r:
+                        raise NotImplementedError(r, p)
                     p = self.register('HL')
                     self.fill(p, t.dst)
                     p.lock() # don't try to use H or L
@@ -1191,7 +1202,7 @@ class Allocator(object):
             if r.locked:
                 raise AllocError("Clobbering locked register", r)
             if not r.available and r.user != leave:
-                self.spill(r)
+                self.spill(r, leave=leave)
             if not r.user or r.user != leave:
                 r.oldl = None
         if self.flags:
