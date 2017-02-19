@@ -350,7 +350,7 @@ class Allocator(object):
         self.splittable_registers = self.registers[1:3]
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
-        self.flags = None # (symbol (of bool type) currently stored in flags, flag it's stored in)
+        self.flags = (None, None) # (symbol (of bool type) currently stored in flags, flag it's stored in)
         self.code = []
         self.structs = {}
         self.enums = {}
@@ -487,6 +487,8 @@ class Allocator(object):
             if r.user == name:
                 r.clean()
                 r.free()
+        if self.flags[0] == name:
+            self.flags = (None, None)
     def choose_byte_register(self, spill=True, prefer=''):
         # Default preference rules:
         # prefer BCDEHL (prefer a reg whose partner is in use), then A, then spill from BCDEHL
@@ -811,6 +813,7 @@ class Allocator(object):
                 a = self.load_byte_into_a(t.dst)
                 a.lock()
                 r = self.fetch_src_byte(t.src)
+                self.clobber_flag_register()
                 self.code.append(self.RTLAdd(a, r))
                 a.dirty()
                 a.unlock()
@@ -829,6 +832,7 @@ class Allocator(object):
                     hl.lock()
                     r = self.choose_word_register()
                     self.fill(r, t.src)
+                    self.clobber_flag_register()
                     self.code.append(self.RTLAdd(hl, r))
                     hl.dirty()
                     hl.unlock()
@@ -836,6 +840,7 @@ class Allocator(object):
                 hl = self.load_word_into_hl(t.dst)
                 hl.lock()
                 r = self.fetch_src_word(t.src)
+                self.clobber_flag_register()
                 self.code.append(self.RTLAdd(hl, r))
                 hl.dirty()
                 hl.unlock()
@@ -1017,6 +1022,7 @@ class Allocator(object):
             hl.unlock()
             self.code.append(self.RTLIndirectRead(css.lo, iy, -1))
             self.code.append(self.RTLFill(css.hi, ByteLiteral(0)))
+            self.clobber_flag_register()
             self.code.append(self.RTLAdd(ix, css))
             csp = 0 # callee stack pointer
             for arg in t.args:
@@ -1070,17 +1076,12 @@ class Allocator(object):
                     r.lock()
                 a = self.load_byte_into_a(left)
                 r.unlock()
+                self.clobber_flag_register()
                 self.code.append(self.RTLCp(a, r))
-                # TODO skip all this if we don't need to save the result
-                # (e.g. we're about to TACIf and kill it)
-                self.spill(a) # in theory there should be nothing to do except mark it as free
-                self.code.append(self.RTLMove(a, ByteLiteral(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
-                label = self.wraplabel(self.tac.genlabel())
-                self.code.append(self.RTLCJump(label, Flag(flag)))
-                self.code.append(self.RTLAdd(a, ByteLiteral(1)))
-                self.code.append(self.RTLLabel(label))
-                a.user = t.dst
-                a.dirty()
+                self.flags = (t.dst, Flag(flag))
+                if typ != AST.Bool():
+                    # Have to convert it to a byte
+                    self.clobber_flag_register()
                 return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACLabel):
@@ -1088,17 +1089,24 @@ class Allocator(object):
             self.code.append(self.RTLLabel(self.wraplabel(t.name)))
             return
         if isinstance(t, TAC.TACIf):
-            if isinstance(t.cond, TAC.FlagIdent):
-                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag(t.cond.name)))
+            if isinstance(t.cond, TAC.Flag):
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag(t.cond.flag)))
                 return
-            if t.cond.name not in self.names:
+            if t.cond not in self.names:
                 raise AllocError("Name not found", t.cond)
-            sc, typ = self.names[t.cond.name]
+            sc, typ = self.names[t.cond]
             size = self.sizeof(typ)
             # spill all registers
-            self.clobber_registers(leave=t.cond.name)
+            self.clobber_registers(leave=t.cond)
+            if typ == AST.Bool() and self.flags[0] == t.cond:
+                flag = self.flags[1]
+                if kill_p(t.cond):
+                    self.kill(t.cond)
+                self.clobber_registers()
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), flag))
+                return
             if size == 1: # cond has to be in A
-                a = self.load_byte_into_a(t.cond.name)
+                a = self.load_byte_into_a(t.cond)
                 self.code.append(self.RTLAnd(a, a))
                 self.clobber_registers()
                 self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
@@ -1197,7 +1205,24 @@ class Allocator(object):
         if follow is None:
             return
         raise AllocError("exdehl with follow", follow)
+    def clobber_flag_register(self, leave=None):
+        if self.flags[0] not in (None, leave):
+            # convert to byte, and spill
+            a = self.register('A')
+            if not a.available:
+                if a.user == leave: # not sure if this can happen
+                    raise AllocError("Clobber byte but must leave A", leave)
+                self.spill(a)
+            self.code.append(self.RTLMove(a, ByteLiteral(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
+            label = self.wraplabel(self.tac.genlabel())
+            self.code.append(self.RTLCJump(label, self.flags[1]))
+            self.code.append(self.RTLAdd(a, ByteLiteral(1)))
+            self.code.append(self.RTLLabel(label))
+            a.user = self.flags[0]
+            a.dirty()
+            self.flags = (None, None)
     def clobber_registers(self, leave=None):
+        self.clobber_flag_register(leave=leave)
         for r in self.registers:
             if r.locked:
                 raise AllocError("Clobbering locked register", r)
@@ -1205,9 +1230,6 @@ class Allocator(object):
                 self.spill(r, leave=leave)
             if not r.user or r.user != leave:
                 r.oldl = None
-        if self.flags:
-            raise NotImplementedError("Spilling flags on clobber")
-            self.flags = None
     @property
     def current_register_allocations(self):
         rv = {}

@@ -122,3 +122,42 @@ Of course, the effectiveness of these hints is greatest when the allocator has
  all are full and unlocked, but needing to spill is not usually a good thing).
  Thus, correct kill logic for gensyms is important to maintain good register
  allocation in longer functions.
+
+Register Clobbers
+-----------------
+Certain TACStatements cause the allocator to clobber the registers; that is, to
+ ensure all values in registers are spilled if necessary, and to consider those
+ values stale henceforward.
+* TACCall.  All our registers are callee-clobbered, that's the ABI.  Of course,
+  after the call the return register holds the return value (if any).
+* TACLabel.  Since we could arrive at this label via a jump from elsewhere, our
+  registers could hold anything after the label.
+* TACIf.  Strictly speaking, our values don't become stale, but we need to make
+  sure we spill them if dirty.  So for simplicity, we just clobber them.
+* TACGoto.  Same reasoning as TACIf.
+The above all clobber not only normal registers, but also the flag register (F).
+ There are some other TACStatements which only clobber the flag register,
+ because they generate instructions which will affect (some of) the flags.
+* TACAdd (except 16-bit INC/DEC).  Produce ADD instructions.
+* TACCall clobbers the flag register _before_ stacking callee arguments.  This
+  is because it must add the caller stack size (which it doesn't know and must
+  get from frame_len) to the caller's frame pointer, to produce the callee's
+  frame pointer; this ADD instruction clobbers flags.
+* TACCompare.  The CP instruction produces output in flags, which naturally
+  clobbers anything that was there before.  If the dst type is not bool, the
+  flags are then clobbered again; this is a hack to force it to be materialised,
+  and probably signifies that a bool on the stack will break things.
+These clobbering rules are important for more than just optimisation, as they
+ also determine when a <flag-ident> has defined behaviour.  For instance, a
+ function call may not take a <flag-ident> in a bool parameter, because by the
+ time we get round to stacking the argument, the flag has already gone.  (I'm
+ not sure whether casting the <flag-ident> to bool would work; I think it might
+ but I haven't tried it.  In any case I think the compiler would be within its
+ rights to 'optimise' the cast to a rename, at which point it breaks.)
+The interaction with labels and jumps is particularly complicated: the behaviour
+ of a <flag-ident> is undefined iff it can ever be reached with that flag's
+ state undefined.  So it's OK to test a flag after a label, as long as every
+ place that can jump to that label (and the code before the label) generates a
+ defined flag state.  It's even OK if there is some unreachable code that leaves
+ the flags in an undefined state and then jumps to the label, because being
+ unreachable it is not a path by which the <flag-ident> can be reached.

@@ -188,14 +188,11 @@ class TACifier(object):
                 self.name = src
         def __repr__(self):
             return 'Identifier(%s, %s)'%(self.typ, self.name)
-    class FlagIdent(Identifier):
+    class Flag(object):
         def __init__(self, flag):
-            super(TACifier.FlagIdent, self).__init__(AST.Bool(), flag)
-        def rename(self, dst, src):
-            if self.name == dst:
-                raise TACError("Tried to rename", self, "to", src)
+            self.flag = flag
         def __repr__(self):
-            return 'FlagIdent(%s)' % (self.name,)
+            return 'Flag(%s)' % (self.flag,)
     class Gensym(object):
         def __init__(self, n):
             self.n = n
@@ -336,8 +333,6 @@ class TACifier(object):
             raise TACError("Name", rval.ident, "not in scope")
         if isinstance(rval, AST.IntConst):
             return self.Identifier(rval.typ, rval)
-        if isinstance(rval, AST.FlagIdent):
-            return self.FlagIdent(rval.flag)
         if isinstance(rval, AST.EnumConst):
             typ = self.get_enum_type(rval.name)
             return self.Identifier(typ, rval)
@@ -391,10 +386,12 @@ class TACifier(object):
         assert len(stmts) == 1, (stmts, sym)
         stmts[0].prefer = prefer
     def walk_expr(self, expr, prefer=''): # this always returns an rvalue
-        if isinstance(expr, (AST.IntConst, AST.EnumConst, AST.Identifier, AST.FlagIdent)):
+        if isinstance(expr, (AST.IntConst, AST.EnumConst, AST.Identifier)):
             return (self.get_constant(expr), [], [])
         if isinstance(expr, AST.StringLiteral):
             return self.get_string_literal(expr, prefer=prefer)
+        if isinstance(expr, AST.FlagIdent):
+            return (self.Identifier(AST.Bool(), self.Flag(expr.flag)), [], [])
         if isinstance(expr, AST.AssignExpr):
             lval = expr.left
             rval = expr.right
@@ -634,7 +631,7 @@ class TACifier(object):
             if stmt.false:
                 raise UnhandledEntity(stmt)
             label = self.genlabel()
-            return pre + post + [self.TACIf(cond, label)] + then + [self.TACLabel(label)]
+            return pre + post + [self.TACIf(cond.name, label)] + then + [self.TACLabel(label)]
         elif isinstance(stmt, AST.GotoStatement):
             return [self.TACGoto(stmt.label)]
         else:

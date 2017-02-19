@@ -112,6 +112,7 @@ class FunctionGenerator(Generator):
             if op.dst.size == 1:
                 self.text.append("\tLD %s,(%s)"%(op.dst, op.src))
             elif op.dst.size == 2:
+                # the INC/DEC don't clobber flags, as they're 16-bit
                 self.text.append("\tLD %s,(%s)"%(op.dst.lo, op.src))
                 self.text.append("\tINC %s"%(op.src,))
                 self.text.append("\tLD %s,(%s)"%(op.dst.hi, op.src))
