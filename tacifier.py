@@ -112,7 +112,7 @@ class TACifier(object):
                 self.src = src
         def __repr__(self):
             return 'TACAddress(%s%s, %s)'%(self.dst, self.prefer, self.src)
-    class TACCompare(TACStatement):
+    class TACCompare(TACStatement): # implies kill of left and right
         def __init__(self, dst, op, left, right, prefer=''):
             self.dst = dst
             self.op = op
@@ -130,7 +130,7 @@ class TACifier(object):
             return 'TACCompare(%s%s, %s, %s, %s)'%(self.dst, self.prefer, self.op, self.left, self.right)
     class TACAdd(TACStatement):
         pass
-    class TACCall(TACStatement):
+    class TACCall(TACStatement): # implies kill of args
         def __init__(self, func, ret, args):
             self.func = func
             self.ret = ret
@@ -174,6 +174,15 @@ class TACifier(object):
                 self.cond = src
         def __repr__(self):
             return 'TACIf(%s, %s)'%(self.cond, self.label)
+    class TACCondGoto(TACStatement): # an inverted TACIf
+        def __init__(self, cond, label):
+            self.cond = cond
+            self.label = label
+        def rename(self, dst, src):
+            if self.cond == dst:
+                self.cond = src
+        def __repr__(self):
+            return 'TACCondGoto(%s, %s)'%(self.cond, self.label)
     class Value(object):
         def __init__(self, typ):
             self.typ = typ
@@ -627,9 +636,11 @@ class TACifier(object):
             return [self.TACLabel(stmt.label)]
         elif isinstance(stmt, AST.IfStatement):
             cond, pre, post = self.walk_expr(stmt.condition)
-            then = self.walk_stmt(stmt.true)
             if stmt.false:
                 raise UnhandledEntity(stmt)
+            if isinstance(stmt.true, AST.GotoStatement):
+                return pre + post + [self.TACCondGoto(cond.name, stmt.true.label)]
+            then = self.walk_stmt(stmt.true)
             label = self.genlabel()
             return pre + post + [self.TACIf(cond.name, label)] + then + [self.TACLabel(label)]
         elif isinstance(stmt, AST.GotoStatement):

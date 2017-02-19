@@ -167,10 +167,27 @@ class SplittableRegister(WordRegister):
     def locked(self):
         return self._lock or any(c._lock for c in self.children)
 class Flag(object):
+    gen_table = {'Z': ('NZ', 'Z'),
+                 'C': ('NC', 'C'),
+                 'V': ('PO', 'PE'),
+                 'S': ('P', 'M'),
+                 }
     def __init__(self, name):
+        self.n = name.startswith('N')
+        if self.n: name = name[1:]
+        assert name in 'ZCVS', name
         self.name = name
+    @property
+    def neg(self):
+        if self.n:
+            return Flag(self.name)
+        return Flag('N' + self.name)
+    @property
+    def gen(self):
+        return self.gen_table[self.name][not self.n]
     def __repr__(self):
-        return '#'+self.name
+        n = 'N' if self.n else ''
+        return '#%s%s' % (n, self.name)
 
 class RTLStructDef(object):
     def __init__(self, name, decls):
@@ -459,6 +476,11 @@ class Allocator(object):
             else:
                 name = ByteLiteral(name.value)
         assert name in self.names or isinstance(name, Literal), name
+        # is it currently in flags?
+        if self.flags[0] == name:
+            assert r == self.register('A')
+            # materialise it
+            self.clobber_flag_register()
         if r.user == name: # Nothing to do; we're already filled
             return
         if r.oldl == name: # Just rematerialise the label
@@ -737,7 +759,7 @@ class Allocator(object):
         return ix
     def tac_to_rtl(self, t):
         def kill_p(sym):
-            return isinstance(sym, TAC.Gensym)
+            return isinstance(sym, (TAC.Gensym, AST.IntConst, AST.EnumConst))
         if isinstance(t, TAC.TACDeclare): return
         if isinstance(t, TAC.TACAssign):
             if t.dst not in self.names:
@@ -817,9 +839,6 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(a, r))
                 a.dirty()
                 a.unlock()
-                if kill_p(t.src):
-                    self.kill(t.src)
-                return
             elif size == 2: # dst has to be in HL, src has to be in a register (even if literal).  EXCEPT if src is +/- 1, in which case we can INC/DEC
                 if isinstance(t.src, AST.IntConst):
                     if t.src.value in [1, -1]:
@@ -836,6 +855,8 @@ class Allocator(object):
                     self.code.append(self.RTLAdd(hl, r))
                     hl.dirty()
                     hl.unlock()
+                    r.clean()
+                    r.free()
                     return
                 hl = self.load_word_into_hl(t.dst)
                 hl.lock()
@@ -844,11 +865,11 @@ class Allocator(object):
                 self.code.append(self.RTLAdd(hl, r))
                 hl.dirty()
                 hl.unlock()
-                if kill_p(t.src):
-                    self.kill(t.src)
-                return
             else:
                 raise AllocError("Tried to add to an aggregate, size = %d"%(size,))
+            if kill_p(t.src):
+                self.kill(t.src)
+            return
         if isinstance(t, TAC.TACReturn):
             if t.src is not None: # else return type is void and there's nothing to return
                 if isinstance(t.src, AST.IntConst):
@@ -938,6 +959,8 @@ class Allocator(object):
             else:
                 raise AllocError("Bad size", size, "for dst of", t)
             self.code.append(self.RTLDeref(r, p))
+            if kill_p(t.src):
+                self.kill(t.src)
             r.dirty()
             return
         if isinstance(t, TAC.TACWrite):
@@ -999,10 +1022,14 @@ class Allocator(object):
                 else:
                     raise NotImplementedError(r, p)
                 self.code.append(self.RTLWrite(p, r))
-                return
             else:
                 r = self.reg_find_word(t.src)
                 raise NotImplementedError(size)
+            if kill_p(t.src):
+                self.kill(t.src)
+            if kill_p(t.dst):
+                self.kill(t.dst)
+            return
         if isinstance(t, TAC.TACCall):
             # CALLING SEQUENCE
             # IX := IY
@@ -1033,6 +1060,8 @@ class Allocator(object):
                 else:
                     raise NotImplementedError(size)
                 csp += size
+                if kill_p(arg):
+                    self.kill(arg)
             self.code.append(self.RTLIndirectWrite(ix, -1, ByteLiteral(csp)))
             # Spill all dirty variables before function call
             for r in self.registers:
@@ -1057,7 +1086,7 @@ class Allocator(object):
                 raise AllocError("Name not found", t.left)
             sc, typ = self.names[t.left]
             size = self.sizeof(typ)
-            if size == 1: # dst has to be in A
+            if size == 1: # left has to be in A
                 swap = False
                 if t.op == '==':
                     flag = 'Z'
@@ -1079,9 +1108,10 @@ class Allocator(object):
                 self.clobber_flag_register()
                 self.code.append(self.RTLCp(a, r))
                 self.flags = (t.dst, Flag(flag))
-                if typ != AST.Bool():
-                    # Have to convert it to a byte
-                    self.clobber_flag_register()
+                if kill_p(t.left):
+                    self.kill(t.left)
+                if kill_p(t.right):
+                    self.kill(t.right)
                 return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACLabel):
@@ -1089,6 +1119,30 @@ class Allocator(object):
             self.code.append(self.RTLLabel(self.wraplabel(t.name)))
             return
         if isinstance(t, TAC.TACIf):
+            if isinstance(t.cond, TAC.Flag):
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag(t.cond.flag).neg))
+                return
+            if t.cond not in self.names:
+                raise AllocError("Name not found", t.cond)
+            sc, typ = self.names[t.cond]
+            size = self.sizeof(typ)
+            # spill all registers
+            self.clobber_registers(leave=t.cond)
+            if typ == AST.Bool() and self.flags[0] == t.cond:
+                flag = self.flags[1]
+                if kill_p(t.cond):
+                    self.kill(t.cond)
+                self.clobber_registers()
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), flag.neg))
+                return
+            if size == 1: # cond has to be in A
+                a = self.load_byte_into_a(t.cond)
+                self.code.append(self.RTLAnd(a, a))
+                self.clobber_registers()
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
+                return
+            raise NotImplementedError(size)
+        if isinstance(t, TAC.TACCondGoto):
             if isinstance(t.cond, TAC.Flag):
                 self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag(t.cond.flag)))
                 return
@@ -1109,7 +1163,7 @@ class Allocator(object):
                 a = self.load_byte_into_a(t.cond)
                 self.code.append(self.RTLAnd(a, a))
                 self.clobber_registers()
-                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('Z')))
+                self.code.append(self.RTLCJump(self.wraplabel(t.label), Flag('NZ')))
                 return
             raise NotImplementedError(size)
         if isinstance(t, TAC.TACGoto):
@@ -1139,16 +1193,18 @@ class Allocator(object):
                 r = self.choose_byte_register(prefer=t.prefer)
                 r.claim(t.dst)
                 self.code.append(self.RTLIndirectRead(r, ix, offset))
-                return
-            if size == 2:
+            elif size == 2:
                 hl = self.register('HL')
                 hl.lock() # can't use HL with IX
                 r = self.choose_word_register(prefer=t.prefer)
                 hl.unlock()
                 r.claim(t.dst)
                 self.code.append(self.RTLIndirectRead(r, ix, offset))
-                return
-            raise NotImplementedError(size, t)
+            else:
+                raise NotImplementedError(size, t)
+            if kill_p(t.src):
+                self.kill(t.src)
+            return
         if isinstance(t, TAC.TACMemberWrite):
             if t.src not in self.names:
                 raise AllocError("Name not found", t.src)
@@ -1169,8 +1225,7 @@ class Allocator(object):
             if size == 1:
                 r = self.fetch_src_byte(t.src)
                 self.code.append(self.RTLIndirectWrite(ix, offset, r))
-                return
-            if size == 2:
+            elif size == 2:
                 hl = self.register('HL')
                 hl.lock() # can't use HL with IX
                 r = self.fetch_src_word(t.src) # but it might already be in HL
@@ -1178,8 +1233,13 @@ class Allocator(object):
                 if r.name == 'HL': # in which case let's move it
                     r = self.exdehl(r)
                 self.code.append(self.RTLIndirectWrite(ix, offset, r))
-                return
-            raise NotImplementedError(size, t)
+            else:
+                raise NotImplementedError(size, t)
+            if kill_p(t.src):
+                self.kill(t.src)
+            if kill_p(t.dst):
+                self.kill(t.dst)
+            return
         raise NotImplementedError(t)
     def wraplabel(self, label):
         return '_%s_%s'%(self.name, label)
@@ -1207,7 +1267,8 @@ class Allocator(object):
         raise AllocError("exdehl with follow", follow)
     def clobber_flag_register(self, leave=None):
         if self.flags[0] not in (None, leave):
-            # convert to byte, and spill
+            # convert to byte, store in A
+            # (if we were called by clobber_registers, A will then get spilled)
             a = self.register('A')
             if not a.available:
                 if a.user == leave: # not sure if this can happen
@@ -1215,7 +1276,7 @@ class Allocator(object):
                 self.spill(a)
             self.code.append(self.RTLMove(a, ByteLiteral(0))) # Warning!  This must not be optimised to 'XOR A' or we'll lose the flags!
             label = self.wraplabel(self.tac.genlabel())
-            self.code.append(self.RTLCJump(label, self.flags[1]))
+            self.code.append(self.RTLCJump(label, self.flags[1].neg))
             self.code.append(self.RTLAdd(a, ByteLiteral(1)))
             self.code.append(self.RTLLabel(label))
             a.user = self.flags[0]

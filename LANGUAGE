@@ -123,7 +123,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
  * returning a bool @<regf>) set them: TBD
  */
 <flag-ident>	::= '#' <flag-name>
-<flag-name>	::= 'S' | 'Z' | 'H' | 'P' | 'N' | 'C'
+<flag-name>	::= 'Z' | 'C' | 'V' | 'S'
 
 <postfix-expr>	::= <primary-expr> | <subscript-expr> | <funcall-expr> |
 		    <member-expr> | <postcrem-expr>

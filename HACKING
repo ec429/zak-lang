@@ -144,9 +144,10 @@ The above all clobber not only normal registers, but also the flag register (F).
   get from frame_len) to the caller's frame pointer, to produce the callee's
   frame pointer; this ADD instruction clobbers flags.
 * TACCompare.  The CP instruction produces output in flags, which naturally
-  clobbers anything that was there before.  If the dst type is not bool, the
-  flags are then clobbered again; this is a hack to force it to be materialised,
-  and probably signifies that a bool on the stack will break things.
+  clobbers anything that was there before.
+* Any time we try to fill a bool that's currently in flags, we implement this
+  with a clobber, because that has the byproduct of converting it to a byte 0 or
+  1 in register A.
 These clobbering rules are important for more than just optimisation, as they
  also determine when a <flag-ident> has defined behaviour.  For instance, a
  function call may not take a <flag-ident> in a bool parameter, because by the

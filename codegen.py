@@ -240,7 +240,7 @@ class FunctionGenerator(Generator):
         elif isinstance(op, RTL.RTLCJump): # TODO notice when we need to use long JP (but how?)
             assert isinstance(op.label, str), op
             assert isinstance(op.flag, Flag)
-            self.text.append("\tJR %s,%s"%(op.flag.name, op.label))
+            self.text.append("\tJR %s,%s"%(op.flag.gen, op.label))
         else:
             raise NotImplementedError(op)
     def generate(self):
@@ -361,19 +361,19 @@ if __name__ == "__main__":
     tac = tacifier.tacify(ast)
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
-    allocations = allocator.alloc(tac, debug=True)
+    allocations = allocator.alloc(tac, {}, debug=True)
     print
     generated = {}
     for name, rtl in allocations.items():
         if name is None:
             print "Generating global variables"
-            gen = GlobalGenerator(rtl, name)
+            gen = GlobalGenerator(rtl, name, {})
             gen.generate()
             gen.print_stats()
             generated[name] = gen
         else:
             print "Generating code for", name
-            gen = FunctionGenerator(rtl, name)
+            gen = FunctionGenerator(rtl, name, {})
             gen.generate()
             gen.print_stats()
             generated[name] = gen

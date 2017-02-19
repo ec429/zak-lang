@@ -59,8 +59,8 @@ class Parser(object):
     pointer <<= Suppress(Literal('*')) +\
                 OGroup(qualifier_list, "qualifier_list") +\
                 OGroup(pointer, "pointer")
-    flag_name = Literal('S') | Literal('Z') | Literal('H') |\
-                Literal('P') | Literal('N') | Literal('C')
+    flag_name = Literal('S') | Literal('Z') |\
+                Literal('P') | Literal('V') | Literal('C')
     flag_ident = (Suppress(Literal('#')) + flag_name)
     reg8 = Litor('A', 'B', 'C', 'D', 'E', 'H', 'L', 'IXH', 'IXL', 'IYH', 'IYL')
     reg16 = Litor('BC', 'DE', 'HL', 'IX', 'IY')
