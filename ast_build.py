@@ -453,7 +453,7 @@ class FuncallExpr(object):
         self.target = target
     @classmethod
     def build(cls, expr, target):
-        return cls([DoAssign(a) for a in expr['arg_list']],
+        return cls([DoAssign(a) for a in expr.get('arg_list', [])],
                    target)
     def __str__(self):
         return 'FuncallExpr(%s)' % (' '.join(map(str, [self.target] + self.args)),)

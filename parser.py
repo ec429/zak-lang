@@ -187,8 +187,8 @@ class Parser(object):
                      Suppress(Literal(']'))
     arg_expr_list = delimitedList(Group(assign_expr))
     funcall_tail = Suppress(Literal('(')) +\
-                   Group(arg_expr_list + Optional(Suppress(Literal(','))))\
-                          ("arg_list") + Suppress(Literal(')'))
+                   OGroup(arg_expr_list + Optional(Suppress(Literal(','))),
+                          ("arg_list")) + Suppress(Literal(')'))
     member_op = Literal('->') | Literal('.')
     member_tail = member_op("op") + identifier("tag")
     postcrem_tail = (Literal('++') | Literal('--'))("op")
