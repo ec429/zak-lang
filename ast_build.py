@@ -658,21 +658,13 @@ def Designator(d):
         return SubscriptDesignator(d['array'])
     raise UnhandledEntity(d)
 
-class Designation(object):
-    def __init__(self, dlist):
-        self.list = [Designator(d) for d in dlist]
-    def __str__(self):
-        return ''.join(map(str, self.list))
-
 class DesignatedInitialiser(object):
     def __init__(self, di):
-        self.d = di.get('designation')
-        if self.d is not None:
-            self.d = Designation(self.d)
+        self.d = [Designator(d) for d in di.get('designation', [])]
         self.i = Initialiser(di['initialiser'])
     def __str__(self):
-        if self.d is not None:
-            return '%s = %s' % (self.d, self.i)
+        if self.d:
+            return '%s = %s' % (' '.join(map(str, self.d)), self.i)
         return str(self.i)
 
 class InitList(object):

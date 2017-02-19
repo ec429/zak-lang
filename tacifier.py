@@ -183,11 +183,31 @@ class TACifier(object):
                 self.cond = src
         def __repr__(self):
             return 'TACCondGoto(%s, %s)'%(self.cond, self.label)
+    class TACInit(TACStatement):
+        pass
     class Value(object):
         def __init__(self, typ):
             self.typ = typ
         def __repr__(self):
             return 'Value(%s)'%(self.typ,)
+    class Member(Value): # used for initialiser designators
+        def __init__(self, typ, struct, tag):
+            super(TACifier.Member, self).__init__(typ)
+            self.struct = struct
+            self.tag = tag
+        def rename(self, dst, src):
+            self.struct.rename(dst, src)
+        def __repr__(self):
+            return 'Member(%s, %s, %s)'%(self.typ, self.struct, self.tag)
+    class Element(Value): # used for initialiser designators
+        def __init__(self, typ, array, subscript):
+            super(TACifier.Element, self).__init__(typ)
+            self.array = array
+            self.subscript = subscript
+        def rename(self, dst, src):
+            self.array.rename(dst, src)
+        def __repr__(self):
+            return 'Element(%s, %s, %s)'%(self.typ, self.array, self.subscript)
     class Identifier(Value):
         def __init__(self, typ, name):
             super(TACifier.Identifier, self).__init__(typ)
@@ -623,6 +643,39 @@ class TACifier(object):
             return (self.Identifier(rtyp, sym), [self.TACDeclare(sym, LEX.Auto('auto'), rtyp)] + fa + asa +
                                                 [self.TACCall(func, sym, args)] + asb + fb, [])
         raise UnhandledEntity(expr)
+    def init_list(self, init, sc, name):
+        stmts = []
+        for di in init.list:
+            sym = name
+            typ = name.typ
+            for d in di.d:
+                if isinstance(d, AST.MemberDesignator):
+                    if not isinstance(typ, AST.Struct):
+                        raise TACError("Type mismatch in initialiser", di, "expected struct for", d, "but have", typ)
+                    mtyp = self.get_member_type(typ, d.tag)
+                    sym = self.Member(mtyp, sym, d.tag)
+                else:
+                    raise UnhandledEntity(d)
+            i, ia, ib = self.initialise(di.i, sc, self.gensym(), sym.typ)
+            ia.append(self.TACInit(sym, i))
+            stmts.extend(ia + ib)
+        return (name, stmts, [])
+    def initialise(self, init, sc, name, typ):
+        if isinstance(init, AST.InitList):
+            i, ia, ib = self.init_list(init, sc, self.Identifier(typ, name))
+        else:
+            i, ia, ib = self.walk_expr(init)
+        if not isinstance(i, self.Identifier):
+            raise TACError("Uninterpreted rvalue", i)
+        if isinstance(i.name, (AST.IntConst, AST.EnumConst)):
+            return i, [], []
+        if isinstance(i.name, self.Gensym):
+            ia.append(self.TACRename(name, i.name))
+        else:
+            ia.insert(0, self.TACDeclare(name, sc, typ))
+            if not isinstance(init, AST.InitList):
+                ia.append(self.TACAssign(name, i.name))
+        return self.Identifier(typ, name), ia, ib
     def walk_stmt(self, stmt):
         if isinstance(stmt, AST.ExpressionStatement):
             rvalue, pre, post = self.walk_expr(stmt.expr)
@@ -666,19 +719,12 @@ class TACifier(object):
         elif sc.extern:
             raise TACError("extern variable", name, "has initialiser", init)
         else:
-            rvalue, pre, post = self.walk_expr(init)
+            rvalue, pre, post = self.initialise(init, sc, name, decl.typ)
             if not decl.typ.compat(rvalue.typ):
                 self.err("Want: %s"%(decl.typ,))
                 self.err("Have: %s"%(rvalue.typ,))
                 raise TACError("Initialiser for %s has wrong type"%(name,))
             stmts.extend(pre + post)
-            if not isinstance(rvalue, self.Identifier):
-                raise TACError("Uninterpreted rvalue", rvalue)
-            if isinstance(rvalue.name, self.Gensym):
-                stmts.append(self.TACRename(name, rvalue.name))
-            else:
-                stmts.insert(0, self.TACDeclare(name, sc, decl.typ))
-                stmts.append(self.TACAssign(name, rvalue.name))
         return stmts
     def walk(self, block):
         func = []

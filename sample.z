@@ -81,7 +81,7 @@ const byte *text = "Nope.";
 byte main()
 {
 	byte *hello = (byte *)"Hello sailor"; // naughty!
-	//struct u32 bar_count = {.lo = 5};
+	struct u32 bar_count = {.lo = 5};
 	byte *offset;
 
 	//bar_count.lo += 18;

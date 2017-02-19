@@ -332,6 +332,13 @@ class Allocator(object):
             self.src = src
         def __repr__(self):
             return 'RTLIndirectWrite(%s, %d, %s)'%(self.dst, self.offset, self.src)
+    class RTLIndirectInit(RTLStatement):
+        def __init__(self, dst, offset, src):
+            self.dst = dst # name of a symbol
+            self.offset = offset
+            self.src = src
+        def __repr__(self):
+            return 'RTLIndirectInit(%s, %d, %s)'%(self.dst, self.offset, self.src)
     class RTLAnd(RTLStatement):
         def __init__(self, dst, src):
             self.dst = dst
@@ -1246,6 +1253,47 @@ class Allocator(object):
                 self.kill(t.src)
             if kill_p(t.dst):
                 self.kill(t.dst)
+            return
+        if isinstance(t, TAC.TACInit):
+            offset = 0
+            sym = t.dst
+            root = sym
+            if self.is_on_stack(t.src):
+                # we're initialising it (in-memory), that constitutes a spill
+                sp, typ, size, filled, spilled = self.stack[t.src]
+                self.stack[t.src] = sp, typ, size, filled, True
+            while not isinstance(sym, TAC.Identifier):
+                if isinstance(sym, TAC.Member):
+                    nxt = sym.struct
+                    tag = sym.tag
+                    styp = nxt.typ
+                    if not isinstance(styp, AST.Struct):
+                        raise AllocError(sym, "is not a struct in", t)
+                    if styp.tag not in self.structs:
+                        raise AllocError(sym, "is incomplete struct in", t)
+                    struct = self.structs[styp.tag]
+                    if tag not in struct.offsets:
+                        raise AllocError(sym, "references non-existent struct member in", t)
+                    offset += struct.offsets[tag]
+                    sym = nxt
+                    continue
+                raise NotImplementedError(sym)
+            size = self.sizeof(root.typ)
+            if size == 1:
+                r = self.fetch_src_byte(t.src.name)
+                self.code.append(self.RTLIndirectInit(sym.name, offset, r))
+            elif size == 2:
+                hl = self.register('HL')
+                hl.lock() # can't use HL with IY
+                r = self.fetch_src_word(t.src.name) # but it might already be in HL
+                hl.unlock()
+                if r.name == 'HL': # in which case let's move it
+                    r = self.exdehl(r)
+                self.code.append(self.RTLIndirectInit(sym.name, offset, r))
+            else:
+                raise NotImplementedError(size, t)
+            if kill_p(t.src):
+                self.kill(t.src)
             return
         raise NotImplementedError(t)
     def wraplabel(self, label):

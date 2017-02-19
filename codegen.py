@@ -11,7 +11,7 @@ Flag = allocator.Flag
 class GenError(Exception): pass
 
 class Generator(object):
-    def __init__(self, rtl, name, opts):
+    def __init__(self, rtl, name, opts, w_opts):
         self.rtl = rtl
         self.name = name
         self.text = []
@@ -19,12 +19,18 @@ class Generator(object):
         self.bss = []
         self.check_stack = opts.get('check-stack', False)
         self.has_error = False
+        self.werror = w_opts.get('error', False)
+        self.wunused_but_set = w_opts.get('unused-but-set', True)
     def staticname(self, name):
         if isinstance(name, TAC.Gensym):
             return '__gensym_%d'%(name.n,)
         return name
     def print_stats(self):
         print "Lines: %d bss, %d data, %d text"%(len(self.bss), len(self.data), len(self.text))
+    def warn(self, *args):
+        if self.werror:
+            self.has_error = True
+        print >>sys.stderr, ' '.join(map(str, args))
     def err(self, *args):
         self.has_error = True
         print >>sys.stderr, ' '.join(map(str, args))
@@ -149,9 +155,26 @@ class FunctionGenerator(Generator):
                 else:
                     raise GenError(op.src.size)
             elif isinstance(op.src, LIT):
-                self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.value))
+                self.text.append("\tLD (%s%+d),%d"%(op.dst, op.offset, op.src.value))
             else:
                 raise GenError(op)
+        elif isinstance(op, RTL.RTLIndirectInit):
+            if self.rtl.is_on_stack(op.dst):
+                offset, typ, size, filled, spilled = self.rtl.stack[op.dst]
+                if offset is None: # it's never filled, so it's never used
+                    assert not filled, self.rtl.stack[op.dst]
+                    if self.wunused_but_set:
+                        self.warn("Init to non-backed", op.dst, "- unused but set variable?")
+                    # skip the initialisation, then, we don't need it
+                elif op.src.size == 1:
+                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset, op.src))
+                elif op.src.size == 2:
+                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset, op.src.lo))
+                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset + 1, op.src.hi))
+                else:
+                    raise GenError(op.src.size)
+            else:
+                raise NotImplementedError(op)
         elif isinstance(op, RTL.RTLMove):
             assert isinstance(op.dst, REG), op
             if isinstance(op.src, REG):
@@ -324,17 +347,19 @@ class GlobalGenerator(Generator):
 
 ## Entry point
 
-def generate(allocations, gen_opts):
+def generate(allocations, gen_opts, w_opts):
     generated = {}
     for name, rtl in allocations.items():
         if name is None:
-            gen = GlobalGenerator(rtl, name, gen_opts)
+            gen = GlobalGenerator(rtl, name, gen_opts, w_opts)
             gen.generate()
             generated[name] = gen
         else:
-            gen = FunctionGenerator(rtl, name, gen_opts)
+            gen = FunctionGenerator(rtl, name, gen_opts, w_opts)
             gen.generate()
             generated[name] = gen
+        if gen.has_error:
+            raise GenError("Error emitted while processing %s (see above)" % (name or 'globals',))
     return generated
 
 def combine(generated):
@@ -367,13 +392,13 @@ if __name__ == "__main__":
     for name, rtl in allocations.items():
         if name is None:
             print "Generating global variables"
-            gen = GlobalGenerator(rtl, name, {})
+            gen = GlobalGenerator(rtl, name, {}, {})
             gen.generate()
             gen.print_stats()
             generated[name] = gen
         else:
             print "Generating code for", name
-            gen = FunctionGenerator(rtl, name, {})
+            gen = FunctionGenerator(rtl, name, {}, {})
             gen.generate()
             gen.print_stats()
             generated[name] = gen

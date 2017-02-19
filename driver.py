@@ -52,7 +52,7 @@ if __name__ == "__main__":
     if opts.debug: print "-ALLOC/RTL-"
     allocations = allocator.alloc(tac, opts.warnings, debug=opts.debug)
     if opts.debug: print "-CODE/GEN-"
-    gen = codegen.generate(allocations, opts.gen_opts)
+    gen = codegen.generate(allocations, opts.gen_opts, opts.warnings)
     if opts.debug:
         print "Generated line counts:"
         for name, g in gen.items():
