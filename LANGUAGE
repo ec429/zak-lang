@@ -120,7 +120,7 @@ The source (after pre-processing by e.g. cpp) shall consist of a series of
 <char-const>	::= "'" (<c-char> | <esc-seq>) "'"
 
 /* Rules for when flags may be used and which operations (other than functions
- * returning a bool @<regf>) set them: TBD
+ * returning a bool @<regf>) set them: TBD (but see HACKING for some notes).
  */
 <flag-ident>	::= '#' <flag-name>
 <flag-name>	::= 'Z' | 'C' | 'V' | 'S'

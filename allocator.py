@@ -127,10 +127,15 @@ class SplitByteRegister(ByteRegister):
     def locked(self):
         return self._lock or self.parent._lock
 class SplittableRegister(WordRegister):
-    def __init__(self, name):
+    def __init__(self, name, hiname=None, loname=None):
         super(SplittableRegister, self).__init__(name)
-        self.children = [SplitByteRegister(n, self) for n in name]
-        self.hi, self.lo = self.children
+        if hiname is None:
+            hiname = name[0]
+        if loname is None:
+            loname = name[1]
+        self.hi = SplitByteRegister(hiname, self)
+        self.lo = SplitByteRegister(loname, self)
+        self.children = self.hi, self.lo
     @property
     def oldl(self):
         return self._oldl
@@ -166,6 +171,9 @@ class SplittableRegister(WordRegister):
     @property
     def locked(self):
         return self._lock or any(c._lock for c in self.children)
+class IndexRegister(SplittableRegister):
+    def __init__(self, name):
+        super(IndexRegister, self).__init__(name, name+'H', name+'L')
 class Flag(object):
     gen_table = {'Z': ('NZ', 'Z'),
                  'C': ('NC', 'C'),
@@ -362,9 +370,8 @@ class Allocator(object):
         self.static = {}
         self.registers = [ByteRegister('A'),
                           SplittableRegister('BC'), SplittableRegister('DE'), SplittableRegister('HL'),
-                          WordRegister('IX'), WordRegister('IY')]
+                          IndexRegister('IX'), IndexRegister('IY')]
         self.general_byte_registers = [self.register(n) for n in 'BCDEHL']
-        self.splittable_registers = self.registers[1:3]
         self.general_word_registers = self.registers[1:4]
         self.all_byte_registers = [self.registers[0]] + self.general_byte_registers
         self.flags = (None, None) # (symbol (of bool type) currently stored in flags, flag it's stored in)
@@ -521,7 +528,7 @@ class Allocator(object):
                 return a
         if prefer == TAC.PREFER_LOWBYTE:
             # Try CEL first, partner free
-            for r in self.splittable_registers:
+            for r in self.general_word_registers:
                 if r.available:
                     return r.lo
         for r in self.general_byte_registers:
@@ -541,7 +548,7 @@ class Allocator(object):
                 return a
         if prefer == TAC.PREFER_LOWBYTE:
             # Try CEL, partner unlocked
-            for r in self.splittable_registers:
+            for r in self.general_word_registers:
                 if not r.locked:
                     return r.lo
         for r in self.general_byte_registers:
