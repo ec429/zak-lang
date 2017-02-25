@@ -88,8 +88,8 @@ class TACifier(object):
     class TACMemberWrite(TACStatement): # write through a struct pointer.  Implies kill of dst as well as src
         def __init__(self, dst, tag, src, prefer=''):
             self.dst = dst
-            self.tag = tag
             self.src = src
+            self.tag = tag
             self.prefer = prefer
         def rename(self, dst, src):
             if self.dst == dst:
@@ -97,7 +97,33 @@ class TACifier(object):
             if self.src == dst:
                 self.src = src
         def __repr__(self):
-            return 'TACMemberWrite(%s%s, %s, %s)'%(self.dst, self.prefer, self.tag, self.src)
+            return 'TACMemberWrite(%s%s, %s, %s)'%(self.dst, self.prefer, self.src, self.tag)
+    class TACMemberGet(TACStatement): # read from a struct
+        def __init__(self, dst, src, tag, prefer=''):
+            self.dst = dst
+            self.src = src
+            self.tag = tag
+            self.prefer = prefer
+        def rename(self, dst, src):
+            if self.dst == dst:
+                self.dst = src
+            if self.src == dst:
+                self.src = src
+        def __repr__(self):
+            return 'TACMemberGet(%s%s, %s, %s)'%(self.dst, self.prefer, self.src, self.tag)
+    class TACMemberPut(TACStatement): # write to a struct.  Implies kill of dst as well as src
+        def __init__(self, dst, tag, src, prefer=''):
+            self.dst = dst
+            self.src = src
+            self.tag = tag
+            self.prefer = prefer
+        def rename(self, dst, src):
+            if self.dst == dst:
+                self.dst = src
+            if self.src == dst:
+                self.src = src
+        def __repr__(self):
+            return 'TACMemberPut(%s%s, %s, %s)'%(self.dst, self.prefer, self.src, self.tag)
     class TACAssign(TACStatement):
         pass
     class TACAddress(TACStatement):
@@ -190,7 +216,7 @@ class TACifier(object):
             self.typ = typ
         def __repr__(self):
             return 'Value(%s)'%(self.typ,)
-    class Member(Value): # used for initialiser designators
+    class Member(Value): # used for initialiser designators, and member accesses
         def __init__(self, typ, struct, tag):
             super(TACifier.Member, self).__init__(typ)
             self.struct = struct
@@ -324,6 +350,16 @@ class TACifier(object):
                 if read:
                     ta.append(self.TACMemberRead(sym, self.nokill(target.name), member))
                 post = [self.TACMemberWrite(target.name, member, sym)]
+                self.done(target)
+                return (self.Identifier(typ, sym), ta, post + tb)
+            if lval.op == '.':
+                sym = self.gensym()
+                typ = self.get_member_type(target.typ, member)
+                self.scopes[-1][sym] = (AST.Auto, typ)
+                ta.insert(0, self.TACDeclare(sym, AST.Auto, typ))
+                if read:
+                    ta.append(self.TACMemberGet(sym, self.nokill(target.name), member))
+                post = [self.TACMemberPut(target.name, member, sym)]
                 self.done(target)
                 return (self.Identifier(typ, sym), ta, post + tb)
             raise NotImplementedError(lval)

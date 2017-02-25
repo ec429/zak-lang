@@ -1222,17 +1222,17 @@ class Allocator(object):
         if isinstance(t, TAC.TACMemberWrite):
             if t.src not in self.names:
                 raise AllocError("Name not found", t.src)
-            dtyp = self.names[t.src][1]
-            size = self.sizeof(dtyp)
+            styp = self.names[t.src][1]
+            size = self.sizeof(styp)
             if t.dst not in self.names:
                 raise AllocError("Name not found", t.dst)
             ptyp = self.names[t.dst][1]
             if not isinstance(ptyp, AST.Pointer):
                 raise AllocError(t.dst, "is not a pointer")
-            styp = ptyp.target
-            if not isinstance(styp, AST.Struct):
+            dtyp = ptyp.target
+            if not isinstance(dtyp, AST.Struct):
                 raise AllocError("*", t.dst, "is not a struct")
-            struct = self.structs[styp.tag]
+            struct = self.structs[dtyp.tag]
             offset = struct.offsets[t.tag]
             ix = self.load_word_into_ix(t.dst)
             # don't need to lock IX as nothing ever chooses it
@@ -1247,6 +1247,77 @@ class Allocator(object):
                 if r.name == 'HL': # in which case let's move it
                     r = self.exdehl(r)
                 self.code.append(self.RTLIndirectWrite(ix, offset, r))
+            else:
+                raise NotImplementedError(size, t)
+            if kill_p(t.src):
+                self.kill(t.src)
+            if kill_p(t.dst):
+                self.kill(t.dst)
+            return
+        if isinstance(t, TAC.TACMemberGet):
+            if t.src not in self.names:
+                raise AllocError("Name not found", t.src)
+            styp = self.names[t.src][1]
+            if not isinstance(styp, AST.Struct):
+                raise AllocError(t.src, "is not a struct")
+            # this Get constitutes a fill from the struct
+            if t.src in self.stack:
+                sp, typ, size, filled, spilled = self.stack[t.src]
+                assert typ == styp, self.stack[t.src]
+                self.stack[t.src] = sp, typ, size, True, spilled
+            struct = self.structs[styp.tag]
+            offset = struct.offsets[t.tag]
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            dtyp = self.names[t.dst][1]
+            size = self.sizeof(dtyp)
+            self.kill(t.dst) # we're about to overwrite it
+            # don't need to lock IX/IY as nothing ever chooses them
+            if size == 1:
+                r = self.choose_byte_register(prefer=t.prefer)
+                r.claim(t.dst)
+                self.code.append(self.RTLIndirectRead(r, t.src, offset))
+            elif size == 2:
+                hl = self.register('HL')
+                hl.lock() # can't use HL with IX/IY
+                r = self.choose_word_register(prefer=t.prefer)
+                hl.unlock()
+                r.claim(t.dst)
+                self.code.append(self.RTLIndirectRead(r, t.src, offset))
+            else:
+                raise NotImplementedError(size, t)
+            if kill_p(t.src):
+                self.kill(t.src)
+            return
+        if isinstance(t, TAC.TACMemberPut):
+            if t.dst not in self.names:
+                raise AllocError("Name not found", t.dst)
+            dtyp = self.names[t.dst][1]
+            if not isinstance(dtyp, AST.Struct):
+                raise AllocError(t.dst, "is not a struct")
+            # this Put constitutes a spill to the struct
+            if t.dst in self.stack:
+                sp, typ, size, filled, spilled = self.stack[t.dst]
+                assert typ == dtyp, self.stack[t.dst]
+                self.stack[t.dst] = sp, typ, size, filled, True
+            struct = self.structs[dtyp.tag]
+            offset = struct.offsets[t.tag]
+            if t.src not in self.names:
+                raise AllocError("Name not found", t.src)
+            styp = self.names[t.src][1]
+            size = self.sizeof(styp)
+            # don't need to lock IX/IY as nothing ever chooses them
+            if size == 1:
+                r = self.fetch_src_byte(t.src)
+                self.code.append(self.RTLIndirectWrite(t.dst, offset, r))
+            elif size == 2:
+                hl = self.register('HL')
+                hl.lock() # can't use HL with IX/IY
+                r = self.fetch_src_word(t.src) # but it might already be in HL
+                hl.unlock()
+                if r.name == 'HL': # in which case let's move it
+                    r = self.exdehl(r)
+                self.code.append(self.RTLIndirectWrite(t.dst, offset, r))
             else:
                 raise NotImplementedError(size, t)
             if kill_p(t.src):

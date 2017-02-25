@@ -84,7 +84,7 @@ byte main()
 	struct u32 bar_count = {.lo = 5};
 	byte *offset;
 
-	//bar_count.lo += 18;
+	bar_count.lo += 18;
 	offset = hello;
 	offset += 6;
 	strcpy(offset, "world!");

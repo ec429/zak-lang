@@ -133,31 +133,63 @@ class FunctionGenerator(Generator):
             else:
                 raise NotImplementedError(op.src.size)
         elif isinstance(op, RTL.RTLIndirectRead):
-            assert isinstance(op.src, REG), op
             assert isinstance(op.dst, REG), op
-            assert op.src.size == 2, op
-            if op.dst.size == 1:
-                self.text.append("\tLD %s,(%s%+d)"%(op.dst, op.src, op.offset))
-            elif op.dst.size == 2:
-                self.text.append("\tLD %s,(%s%+d)"%(op.dst.lo, op.src, op.offset))
-                self.text.append("\tLD %s,(%s%+d)"%(op.dst.hi, op.src, op.offset + 1))
-            else:
-                raise GenError(op.dst.size)
-        elif isinstance(op, RTL.RTLIndirectWrite):
-            assert isinstance(op.dst, REG), op
-            assert op.dst.size == 2, op
             if isinstance(op.src, REG):
-                if op.src.size == 1:
-                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src))
-                elif op.src.size == 2:
-                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.lo))
-                    self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset + 1, op.src.hi))
+                assert op.src.size == 2, op
+                if op.dst.size == 1:
+                    self.text.append("\tLD %s,(%s%+d)"%(op.dst, op.src, op.offset))
+                elif op.dst.size == 2:
+                    self.text.append("\tLD %s,(%s%+d)"%(op.dst.lo, op.src, op.offset))
+                    self.text.append("\tLD %s,(%s%+d)"%(op.dst.hi, op.src, op.offset + 1))
                 else:
-                    raise GenError(op.src.size)
-            elif isinstance(op.src, LIT):
-                self.text.append("\tLD (%s%+d),%d"%(op.dst, op.offset, op.src.value))
+                    raise GenError(op.dst.size)
             else:
-                raise GenError(op)
+                # it's a name.  Get its address from stack or static
+                if self.rtl.is_on_stack(op.src):
+                    offset, typ, size, filled, spilled = self.rtl.stack[op.src]
+                    if offset is None: # We tried to fill a local that isn't memory-backed
+                        assert not spilled, self.rtl.stack[op.src]
+                        raise GenError("Indirect read from non-backed %s '%s' (used uninitialised variable?)"%(typ, op.src))
+                    if op.dst.size == 1:
+                        self.text.append("\tLD %s,(IY%+d)"%(op.dst, offset + op.offset))
+                    elif op.dst.size == 2:
+                        self.text.append("\tLD %s,(IY%+d)"%(op.dst.lo, offset + op.offset))
+                        self.text.append("\tLD %s,(IY%+d)"%(op.dst.hi, offset + op.offset + 1))
+                    else:
+                        raise GenError(op.dst.size)
+                else:
+                    raise GenError(op.src)
+        elif isinstance(op, RTL.RTLIndirectWrite):
+            if isinstance(op.dst, REG):
+                assert op.dst.size == 2, op
+                if isinstance(op.src, REG):
+                    if op.src.size == 1:
+                        self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src))
+                    elif op.src.size == 2:
+                        self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset, op.src.lo))
+                        self.text.append("\tLD (%s%+d),%s"%(op.dst, op.offset + 1, op.src.hi))
+                    else:
+                        raise GenError(op.src.size)
+                elif isinstance(op.src, LIT):
+                    self.text.append("\tLD (%s%+d),%d"%(op.dst, op.offset, op.src.value))
+                else:
+                    raise GenError(op)
+            else:
+                # name
+                if self.rtl.is_on_stack(op.dst):
+                    offset, typ, size, filled, spilled = self.rtl.stack[op.dst]
+                    if offset is None: # this probably shouldn't happen
+                        assert not filled, self.rtl.stack[op.dst]
+                        raise GenError("Indirect write to non-backed %s '%s'"%(typ, op.dst))
+                    if op.src.size == 1:
+                        self.text.append("\tLD (IY%+d),%s"%(offset + op.offset, op.src))
+                    elif op.src.size == 2:
+                        self.text.append("\tLD (IY%+d),%s"%(offset + op.offset, op.src.lo))
+                        self.text.append("\tLD (IY%+d),%s"%(offset + op.offset + 1, op.src.hi))
+                    else:
+                        raise GenError(op.dst.size)
+                else:
+                    raise GenError(op.src)
         elif isinstance(op, RTL.RTLIndirectInit):
             if self.rtl.is_on_stack(op.dst):
                 offset, typ, size, filled, spilled = self.rtl.stack[op.dst]
@@ -167,10 +199,10 @@ class FunctionGenerator(Generator):
                         self.warn("Init to non-backed", op.dst, "- unused but set variable?")
                     # skip the initialisation, then, we don't need it
                 elif op.src.size == 1:
-                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset, op.src))
+                    self.text.append("\tLD (IY%+d),%s"%(offset + op.offset, op.src))
                 elif op.src.size == 2:
-                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset, op.src.lo))
-                    self.text.append("\tLD (IY%+d),%d"%(offset + op.offset + 1, op.src.hi))
+                    self.text.append("\tLD (IY%+d),%s"%(offset + op.offset, op.src.lo))
+                    self.text.append("\tLD (IY%+d),%s"%(offset + op.offset + 1, op.src.hi))
                 else:
                     raise GenError(op.src.size)
             else:
