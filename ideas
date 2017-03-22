@@ -47,6 +47,7 @@ Beware! (differences from C):
 * There is a notion of an 'incomplete enum type' analogous to that of 'incomplete struct type'.  While I can't see any use for this, I also can't see any reason to forbid it, and the compiler supports it naturally - it would take more effort to detect and reject it than it does to support it.
 * There are no union types.
 * The tag namespaces for structure and enumeration types are distinct (i.e. "struct foo { /* ... */ }; enum foo byte { /* ... */ };" declares two distinct types).
+* At the moment, partially initialising an auto struct doesn't initialise the rest to zero.  However, I haven't decided whether it _should_; probably in the future it will do so and the language will require it, as C does.
 
 Proposed future extensions:
 * Allow the underlying type of an enum to be another enum.
