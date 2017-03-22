@@ -1,0 +1,48 @@
+enum colours byte { /* When declaring an enum, we also declare its underlying integer type */
+	$RED,
+	$GREEN	= 020,
+	$BLUE,
+
+	$NUM_COLOURS
+};
+
+byte rgb[3];
+
+byte main()
+{
+	rgb[0] = 0xff;
+	rgb[1] = 0x7f;
+	rgb[2] = 0;
+
+	return 0;
+}
+
+/* Produce better code by manual CSE */
+byte main2()
+{
+	byte *p = rgb;
+
+	*p++ = 0xff;
+	*p++ = 0x7f;
+	*p = 0;
+
+	return 0;
+}
+
+byte colours[$NUM_COLOURS][3]/* = {
+	[$RED][0] = 0xff,
+	[$GREEN][1] = 0xff,
+	[$BLUE][2] = 0xff,
+}*/;
+
+/* This is illegal, a function can't return an array */
+byte get_colour(enum colours col)[3];
+
+byte no_colour[3]/* = {0x7f, 0x7f, 0x7f}*/;
+
+byte (*get_colour_p(enum colours col))[3]
+{
+	if (col < $NUM_COLOURS)
+		return &colours[col];
+	return &no_colour;
+}

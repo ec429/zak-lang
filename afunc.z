@@ -10,6 +10,11 @@ byte sum(byte a, byte b)
 	return a;
 }
 
+byte sum2(byte a, byte b)
+{
+	return a + b;
+}
+
 byte sump(byte *a, byte *b)
 {
 	byte tmp = *a;
@@ -24,4 +29,12 @@ byte sump2(byte *a, byte *b)
 	byte pa = *a, pb = *b;
 
 	return pb += pa;
+}
+
+byte sumpp(byte **a, byte **b)
+{
+	byte tmp = **a;
+
+	tmp += **b;
+	return tmp;
 }

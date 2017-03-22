@@ -1,10 +1,14 @@
 word; // like, yeah, man!
 
+byte me;
 byte foo, *bar;
 extern word baz;
 static byte answer_to_everything = 42;
 word taxicab = 1729l;
+word hexy = 0x5389l, short=0x2a;
+byte octal = 0177;
 
+extern byte do_a_thing(byte);
 /* We can't use the names "f" and "i" as those alias registers in the generated
  * assembly, and the names of globals are kept for linking reasons.
  */
@@ -14,6 +18,12 @@ byte *g(byte); // declares g as function (byte) returning pointer to byte
 byte (*h(byte))(word); // declares h as function (byte) returning pointer to function (word) returning byte
 
 byte (**(*name_i)(byte))(word); // declares _i as pointer to function (byte) returning pointer to pointer to function (word) returning byte
+
+byte call_byte_fn(byte (*)()); // declares call_byte_fn as function (pointer to function returning byte) returning byte
+
+// prototypes for a couple of functions we actually define later
+byte sum(byte a, byte b);
+void strcpy(byte *dst, byte *src);
 
 static bool question(byte answer)
 {
@@ -26,7 +36,7 @@ byte sum(byte a, byte b)
 	return a;
 }
 
-void strcpy(byte *dst, byte *src)
+void strcpy(byte *dst, const byte *src)
 {
 	byte tmp;
 
@@ -51,29 +61,30 @@ struct u32
 
 struct two_u32 /* nested structs test */
 {
-	struct u32 x;
-	struct u32 y;
+	struct u32 x, y;
 };
 
 struct u32 number_of_foos;
 
-/*void add_u32(struct u32 *dst, struct u32 *src)
+void add_u32(struct u32 *dst, struct u32 *src)
 {
 	dst->lo += src->lo;
 	if (#C) // test carry flag
 		dst->hi++;
 	dst->hi += src->hi;
-}*/
+}
 
-extern void puts(byte *);
+extern void puts(const byte *);
 
-byte main(void)
+const byte *text = "Nope.";
+
+byte main()
 {
-	byte *hello = "Hello sailor";
-	struct u32 bar_count;
+	byte *hello = (byte *)"Hello sailor"; // naughty!
+	struct u32 bar_count = {.lo = 5};
 	byte *offset;
 
-	//bar_count.hi = 0;
+	bar_count.lo += 18;
 	offset = hello;
 	offset += 6;
 	strcpy(offset, "world!");

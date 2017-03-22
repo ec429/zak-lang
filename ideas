@@ -1,11 +1,10 @@
 ideas for zak (Z80 Abstractions for Kernels) language
 
-data types: void, bool, byte, word, pointer, struct, union?, enum?, array
+PLEASE NOTE!  This was/is a scratch file for working out ideas.  The actual definition of the zak language belongs in the file 'LANGUAGE'.
+For things which that file does not specify, _this_ file contains descriptions of plans, limits of the current implementation, and limits of older versions of the implementation.  Don't trust it...
+
+data types: void, bool, byte, word, pointer, struct, enum, array
 use IY for variable stack (totally separate to the SP push/pop/call/ret stack)
-initially, just a mechanism for linkage, local-variable allocation and type-safety
-i.e. ops are things like foo += bar; if (#C) {baz--; ret;}
-so no expression evaluation, just the operations that map naturally onto Z80 opcodes
-of course, sometimes that will still require some cleverness, but hopefully it'll be minimal
 will need a macroexpansion facility
 would be nice to have inline functions for things like 32-bit arithmetic (and even 16-bit multiplies etc)
 
@@ -17,65 +16,43 @@ initially, make no attempt to do optimisation in the compiler beyond 'sane code 
 calling conventions:
 * anything but SP (and R, I suppose) is callee-clobbered
 * return value location:
-	may be specified as part of function signature ("word __DE get_dest(void);"), else following defaults:
+	may be specified as part of function signature ("word get_dest @DE (); bool check_nonzero @!#Z (byte);"), else following defaults:
 	- bool, byte, enum: A
 	- word, pointer: HL
-	- struct, union: caller-stack, compiler passes pointer as extra argument.  Initial version might not do this for you (i.e. entirely reject functions returning struct)
+	- struct: caller-stack, compiler passes pointer as extra argument.  Initial version might not do this for you (i.e. entirely reject functions returning struct)
 	- array: forbidden
 * argument locations:
-	may be specified as part of function signature ("byte do_something(word __BC src, word __DE dst);") *for extern functions only* (i.e. it's to make life easier for asm callees, which don't even have to know they're being called from zak!)
+	may be specified as part of function signature ("byte do_something(word @BC src, word @DE dst);").  It's there to make life easier for asm callees, which don't even have to know they're being called from zak; but zak functions can do it too (though probably shouldn't).
 	otherwise, everything is passed on the stack
-	stack size per function is restricted to 255 bytes, so big structs or arrays on stack hurt!
-	if you try to pass an array to a function, it's passed by reference (i.e. it degrades to a pointer).  A function *must not* have a formal parameter of array type, nor of struct type (stick to pointers)
+	stack size per function is restricted to 128 bytes, so big structs or arrays on stack hurt!  (Struct sizes - even structs that only ever appear as pointers - are also restricted to 128 bytes, and for the same reason: the maximum positive displacement of an indexed load is +127.)
+	if you try to pass an array to a function, it's passed by reference (i.e. it degrades to a pointer).  A function *must not* have a formal parameter of array type, nor of struct type (stick to pointers).  Though, we might add support for struct parameters later.
 
 Caller constructs the initial stack frame.  It starts with 'byte frame_len;', which is used only for debugging purposes, but _always_ present
 frame_len does not include itself in the length.  IY points to the byte _after_ frame_len.
 Then follow the arguments, in listed order (a struct- or union-return pointer goes first)
 Caller makes the call with PUSH IY; IY := <callee-frame-pointer>; CALL callee
-Callee then extends this stack frame to make room for its local variables; it modifies frame_len (if we're paranoid, it first checks the old value)
+Callee then extends this stack frame to make room for its local variables; it modifies frame_len (if we're paranoid (-Gcheck-stack), it first checks the old value)
 On return, callee simply RETs, and caller does POP IY to get its own stack pointer back
 Caller might then decide to extend its stack frame further, overwriting the stale callee stack frame.  This might be done to minimise total stack usage (eg. we put something big on the stack after the last call), but relies on the compiler KNOWING the flow of control and that there's no way we can end up having overlapping liveness, which is probably more optimisation than a first version needs.
 
-for our first version, we don't include array support (but that will be needed _fairly_ soon after)
-
 Beware! (differences from C):
 * The assign-ish operators return _the value written_, not the contents of the variable written to.  Because that's waaay easier to implement.
-* Struct definitions can only appear at file scope, not in functions, nor inside other structs.
-  So instead of "struct foo { struct bar { word x; } bar; };", write "struct bar { word x; }; struct foo { struct bar bar; };".
+* The precedence and associativity of binary operators are different.  See LANGUAGE for details.
+* Cast operators may specify their 'source' type as well as their 'destination' type; if T, U, V and W are types, then in "W w; T t = (U, V)w;" W must be convertible to V, and U must be convertible to T, else the program will be rejected.
+* A function with no parameters is declared as "func()", not "func(void)".  While the latter is legal, it has a different type, as it takes a formal parameter of void type; this is useless but consistent.
+* A string literal is a 'const char []'.
+* Pointers to aggregate types may not be subtracted (because that could require difficult division.  word* is fine, because division by 2 is an easy shift; but since there are no alignment requirements, subtracting word pointers from different objects may discard a remainder.  But that's OK because you're not allowed to do that anyway, and word pointers _within_ an array of words will always be aligned with one another).
+* My definition of 'scalar' and 'arithmetic' types is the opposite way round to that in the C standard.  Because dammit, a pointer isn't a scalar, and you can do arithmetic on it!
+* Enumerated types specify, at definition time, their underlying integer type.  Also, enumeration constants have the type of the enumerator which defined them, rather than (as in C) 'int'.
+* There is a notion of an 'incomplete enum type' analogous to that of 'incomplete struct type'.  While I can't see any use for this, I also can't see any reason to forbid it, and the compiler supports it naturally - it would take more effort to detect and reject it than it does to support it.
+* There are no union types.
+* The tag namespaces for structure and enumeration types are distinct (i.e. "struct foo { /* ... */ }; enum foo byte { /* ... */ };" declares two distinct types).
+* At the moment, partially initialising an auto struct doesn't initialise the rest to zero.  However, I haven't decided whether it _should_; probably in the future it will do so and the language will require it, as C does.
 
-Parsing notes:
-
-In file scope we allow:
-	[storage] type [data [= initialiser] [, data [= initialiser] [...]]]; // global variable declarations, including function declaration without definition
-	[storage] type function ( argument-list ) { local-variables function-body } // function definition
-where 'type' can be a builtin type or 'struct tag [{ declaration-list }]'
-where 'data' can be derived (e.g. *data to make it a pointer; data(argument-list) making it a function declaration, or even (*data)(argument-or-type-list) making it a function pointer)
-where 'storage' is one of:
-	auto
-	static
-	extern
-where the rump form '[storage] type;' is only sensible if type is a struct, but there's no need to forbid it otherwise
-
-In an argument-list we allow:
-	type name [, type name [...]]
-where, again, name can be derived.  In an argument-or-type-list, each 'name' is optional.
-
-In local-variables we allow:
-	[storage] type data [= initialiser] [, data [= initialiser] [...]]; // local variable declarations
-where 'data' can be derived but must not be a function declaration (though it may be a function pointer).
-
-In a function-body we allow:
-	[identifier assign-ish] expression;
-
-A declarator (a.k.a. derived identifier) is one of:
-	identifier
-	( declarator )
-	* declarator
-	declarator ( argument-or-type-list )
-	qualifier declarator
-
-A qualifier is one of:
-	const
-
-List of all keywords:
-auto static extern const return struct void bool byte word if goto
+Proposed future extensions:
+* Allow the underlying type of an enum to be another enum.
+  For instance, "enum foo byte { F0, F1 }; enum bar enum foo { B0 = $F0, B2 = 2 };"
+  As with integer underlying types, this produces a one-way type-checking requirement: where an enum foo is expected (e.g. in an initialiser or function parameter), an enum bar may be used, but not vice-versa.
+  Similarly, one would want "$F1 | $B2" to be an expression of type enum foo.  This may seem odd, as the (putatively 'more-specific') enum bar has introduced values that aren't the value of any enum foo literal; but this is really no different to (say) "$F1 + $F1", also an expression of type enum foo which escapes the enumeration.  We definitely want to allow that, as (for instance) "enum quux byte { Q0, Q1, Q2, MAX_Q, QFLAG = $MAX_Q } q = $Q1 + $QFLAG;" would be a reasonable way to write a 'structured' enumerated type.  Of course, a _better_ way for most purposes is to make $QFLAG be a single bit ("enum quux2 byte { Q0, Q1, Q2, QFLAG = 4 } q = $Q1 | $QFLAG;"), but that could end up wasting space: suppose instead of a tristate and a flag you have three tristates; 3 * 3 * 3 = 27 (five bits), whereas 4 * 4 * 4 = 64 (six bits).  Then again, _interpreting_ such values will be slow, as it's tantamount to division; space-vs-time tradeoffs are nothing new...
+  The foregoing ramble notwithstanding, 'bitwise' enums (like enum quux2 above) _still_ allow to escape the enumerated values, it just happened not to be possible with enum foo.  Though there's always ~.
+  So enum bar can "extend" enum foo, but the language views it as a type specialisation.  The onus is on the programmer, when defining such an enumerated type, to ensure that the values of an enum bar are always acceptable to code expecting an enum foo.  The reason why the language doesn't check this is because it can't: it doesn't know which unenumerated values (e.g. bitwise ORs of flag bits) are acceptable values and which (like $Q1 | $Q2 in enum quux2) are not.  It is more correct to think of the enum body, not as defining the values the enum may take, but as declaring a set of constants of the enum's type; the enum itself is still 'really' a byte or a word if one views types as 'sets of values'.

@@ -1,4 +1,7 @@
-void pa(void)
+/* This function attempts to use two uninitialised variables.
+ * The compiler will reject it for that reason.
+ */
+void pa()
 {
 	byte a;
 	byte *b;

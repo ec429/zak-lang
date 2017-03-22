@@ -1,0 +1,11 @@
+struct u32
+{
+	word hi;
+	word lo;
+};
+
+struct two_u32 /* nested structs test */
+{
+	struct u32 x;
+	struct u32 y;
+};

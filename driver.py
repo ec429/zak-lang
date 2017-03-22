@@ -1,14 +1,22 @@
 #!/usr/bin/python
 
 import optparse, pprint, sys
-import parser, tacifier, allocator, codegen
+import parser, ast_build, tacifier, allocator, codegen
 
 def parse_args():
     x = optparse.OptionParser()
     x.add_option('-o', '--output', type='string', default="out.s")
     x.add_option('-D', '--debug', action='store_true')
     x.add_option('-n', '--dry-run', action='store_true')
+    x.add_option('-W', action='append', dest='warnings', default=[])
+    x.add_option('-G', action='append', dest='gen_opts', default=[])
     opts, args = x.parse_args()
+    def boolean_option(t):
+        if t.startswith('no-'):
+            return (t[3:], False)
+        return (t, True)
+    opts.warnings = dict(map(boolean_option, opts.warnings))
+    opts.gen_opts = dict(map(boolean_option, opts.gen_opts))
     if len(args) > 1:
         x.error("Multiple input files - only one supported")
     return opts, args
@@ -24,10 +32,17 @@ if __name__ == "__main__":
     parse_tree = parser.parse(source)
     if opts.debug:
         print "Parse globals:"
-        pprint.pprint(parse_tree.globals)
+        print parse_tree.dump()
+        print
+    if opts.debug: print "-AST/BUILD-"
+    ast = ast_build.AST_builder(parse_tree)
+    if opts.debug:
+        print "Syntax tree"
+        for decl in ast.decls:
+            print decl
         print
     if opts.debug: print "-TACIFY-"
-    tac = tacifier.tacify(parse_tree)
+    tac = tacifier.tacify(ast)
     if opts.debug:
         print "TAC functions:"
         pprint.pprint(tac.functions)
@@ -35,22 +50,9 @@ if __name__ == "__main__":
     assert tac.in_func is None, tac.in_func
     assert len(tac.scopes) == 1
     if opts.debug: print "-ALLOC/RTL-"
-    allocations = allocator.alloc(parse_tree, tac)
-    if opts.debug:
-        print "RTL functions:"
-        for name, rtl in allocations.items():
-            print rtl.sc, name
-            print rtl.stack
-            pprint.pprint(rtl.code)
-            print
-        print "Structs:"
-        for tag, struc in allocations[None].structs.items():
-            print "  struct", tag
-            for off, typ, memb, size in struc.members:
-                print "    <+%02x> %r %s (%x)"%(off, typ, memb, size)
-        print
+    allocations = allocator.alloc(tac, opts.warnings, debug=opts.debug)
     if opts.debug: print "-CODE/GEN-"
-    gen = codegen.generate(allocations)
+    gen = codegen.generate(allocations, opts.gen_opts, opts.warnings)
     if opts.debug:
         print "Generated line counts:"
         for name, g in gen.items():
@@ -62,7 +64,10 @@ if __name__ == "__main__":
         print "==ASSEMBLY OUTPUT BEGINS HERE=="
         outs.append(sys.stdout)
     if not opts.dry_run:
-        dest = open(opts.output, 'w')
+        if opts.output == '-':
+            dest = sys.stdout
+        else:
+            dest = open(opts.output, 'w')
         outs.append(dest)
     def pr(line):
         for out in outs:
