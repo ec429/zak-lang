@@ -20,6 +20,12 @@ Writing the kernel for pegboard (my SMP Z80 architecture, see
  crazy regparm things on a per-function basis (i.e. the function prototype can
  specify register linkage of some parameters) to make life easier for callees
  written in asm.
+When (and if) it's done, it will hopefully be an ideal language for software
+ which for other reasons is already not portable off Z80 machines, and which
+ requires enough low-level hackery that the asm-friendly linkage (i.e. the
+ "crazy regparm things") makes a useful substitute for inline asms.
+Also, I wanted to learn compiler theory, and writing a compiler seemed like the
+ obvious way to go about that ;)
 
 How?
 ----
